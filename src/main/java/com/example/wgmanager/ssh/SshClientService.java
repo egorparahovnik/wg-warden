@@ -44,6 +44,30 @@ public class SshClientService {
             }
         } catch (Exception e) { throw new SshConnectionException("SSH connection or OS detection failed",e); }
     }
+    public String runSudoScript(String host,int port,String username,SshCredentials credentials,String pinnedFingerprint,String script) {
+        try(SshClient client=SshClient.setUpDefaultClient()) {
+            client.setServerKeyVerifier((session,address,key)->{try{return pinnedFingerprint.equals(fingerprint(key));}catch(Exception e){return false;}});
+            client.start();
+            try(ClientSession session=client.connect(username,host,port).verify(10,TimeUnit.SECONDS).getSession()) {
+                authenticate(session,credentials);
+                try(var channel=session.createExecChannel("sudo -n bash -s");var out=new ByteArrayOutputStream()) {
+                    channel.setIn(new ByteArrayInputStream(script.getBytes(StandardCharsets.UTF_8)));
+                    channel.setOut(out);channel.setErr(out);channel.open().verify(10,TimeUnit.SECONDS);
+                    channel.waitFor(java.util.EnumSet.of(org.apache.sshd.client.channel.ClientChannelEvent.CLOSED),TimeUnit.MINUTES.toMillis(3));
+                    if(channel.getExitStatus()==null||channel.getExitStatus()!=0) throw new IOException("remote provisioning command failed: "+out.toString(StandardCharsets.UTF_8));
+                    return out.toString(StandardCharsets.UTF_8).trim();
+                }
+            }
+        } catch(Exception e) { throw new SshConnectionException("WireGuard provisioning failed",e); }
+    }
+    private void authenticate(ClientSession session,SshCredentials credentials) throws Exception {
+        if(credentials.privateKey()!=null&&!credentials.privateKey().isBlank()) {
+            var identities=SecurityUtils.loadKeyPairIdentities(null,()->"key",new ByteArrayInputStream(credentials.privateKey().getBytes(StandardCharsets.UTF_8)),
+                    credentials.passphrase()==null?FilePasswordProvider.EMPTY:FilePasswordProvider.of(credentials.passphrase()));
+            identities.forEach(session::addPublicKeyIdentity);
+        } else session.addPasswordIdentity(credentials.password());
+        session.auth().verify(15,TimeUnit.SECONDS);
+    }
     private String execute(ClientSession session,String command) throws IOException {
         try(var channel=session.createExecChannel(command); var out=new ByteArrayOutputStream()) {
             channel.setOut(out); channel.open().verify(10,TimeUnit.SECONDS); channel.waitFor(java.util.EnumSet.of(org.apache.sshd.client.channel.ClientChannelEvent.CLOSED),TimeUnit.SECONDS.toMillis(15));

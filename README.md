@@ -104,7 +104,7 @@ WireGuard Manager позволяет пользователю подключит
 
 Порядок этапов совпадает с зависимостями модулей: auth → servers → ssh → provisioning → peers → monitoring → frontend.
 
-### Этап 0. Каркас (сделано)
+### Этап 0. Каркас (реализовано)
 
 - Maven / Spring Boot 4.1.x, Java 21, Docker Compose с PostgreSQL 16.
 - Flyway-миграция `V1__init.sql`: `users`, `servers`, `wg_interfaces`, `peers`.
@@ -113,7 +113,7 @@ WireGuard Manager позволяет пользователю подключит
 
 **Критерий:** `./mvnw test` поднимает контекст на Testcontainers и применяет миграции.
 
-### Этап 1. Аутентификация (сделано)
+### Этап 1. Аутентификация (реализовано)
 
 - Entity и репозиторий `User`, регистрация и логин.
 - JWT: выдача токена, фильтр (закрыть TODO в `SecurityConfig`). Argon2 уже подключён.
@@ -121,7 +121,7 @@ WireGuard Manager позволяет пользователю подключит
 
 **Критерий:** `POST /api/auth/register` и `POST /api/auth/login` работают; остальные `/api/**` требуют JWT; есть тесты на Testcontainers.
 
-### Этап 2. Серверы и SSH
+### Этап 2. Серверы и SSH (реализовано)
 
 - Клиент Apache MINA SSHD: проверка host key, выполнение команд.
 - CRUD серверов; SSH-креды шифруются через `CryptoService`.
@@ -129,13 +129,15 @@ WireGuard Manager позволяет пользователю подключит
 
 **Критерий:** пользователь добавляет VPS и видит ОС и статус без установки WireGuard.
 
-### Этап 3. Provisioning WireGuard
+### Этап 3. Provisioning WireGuard (реализовано)
 
 - Идемпотентная установка пакетов на Ubuntu/Debian.
 - Генерация ключей интерфейса, `wg0`, IP forwarding и NAT, запуск через `wg-quick` / `systemctl`.
 - Последующие изменения — через `wg set` или `wg syncconf`, без разрыва активных сессий.
 
 **Критерий:** на чистом Ubuntu/Debian поднимается интерфейс `wg0`.
+
+Реализован endpoint `POST /api/servers/{id}/provisioning/wireguard`. Требуется доступ по SSH с `sudo -n` на команды установки и настройки; provisioning идемпотентно создаёт `wg0` с адресом `10.66.0.1/24`, портом `51820`, включает IPv4 forwarding и NAT. Существующая конфигурация `wg0`, не созданная WireGuard Manager, не перезаписывается. Приватный ключ остаётся в конфигурации на VPS и дополнительно хранится в БД только в AES-GCM шифрованном виде. Ответ содержит только публичный ключ.
 
 ### Этап 4. Пиры
 
@@ -229,7 +231,7 @@ cd frontend && npm install && npm run dev
 
 ### API
 
-Этапы 1 и 2 реализованы. Публичные маршруты: `POST /api/auth/register`, `POST /api/auth/login`, `/actuator/health`, OpenAPI. Остальные `/api/**` требуют заголовок `Authorization: Bearer <JWT>`.
+Этапы 1–3 реализованы. Публичные маршруты: `POST /api/auth/register`, `POST /api/auth/login`, `/actuator/health`, OpenAPI. Остальные `/api/**` требуют заголовок `Authorization: Bearer <JWT>`.
 
 | Метод и путь | Этап | Назначение |
 | --- | --- | --- |
@@ -237,6 +239,7 @@ cd frontend && npm install && npm run dev
 | `GET /api/me` | 1 | текущий пользователь (требует JWT) |
 | `GET, POST /api/servers` | 2 | список серверов и добавление с SSH-проверкой |
 | `GET, PUT, DELETE /api/servers/{id}` | 2 | чтение, изменение и удаление сервера |
+| `POST /api/servers/{id}/provisioning/wireguard` | 3 | установить и настроить WireGuard |
 | `/api/peers` | 4 | клиенты, conf, QR |
 
 Для создания сервер принимает `name`, `host`, `sshPort`, `sshUser` и `credentials`, где нужно передать ровно одно из полей `password` или `privateKey` (для ключа можно передать `passphrase`). При первом SSH-подключении fingerprint ключа хоста закрепляется (TOFU); при изменении сервера новый ключ хоста не принимается. Проверка выполняет только фиксированную команду чтения `/etc/os-release` и поддерживает Ubuntu/Debian. Учётные данные хранятся в зашифрованном виде и не возвращаются API. При ошибке SSH сервер сохраняется со статусом `ERROR`.

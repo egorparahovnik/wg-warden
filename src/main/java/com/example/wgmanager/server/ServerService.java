@@ -16,6 +16,7 @@ public class ServerService {
     public ServerService(ServerRepository repository,CryptoService crypto,SshClientService ssh){this.repository=repository;this.crypto=crypto;this.mapper=new ObjectMapper();this.ssh=ssh;}
     @Transactional(readOnly=true) public List<ServerResponse> list(UUID user){return repository.findAllByUserIdOrderByCreatedAtDesc(user).stream().map(ServerResponse::from).toList();}
     @Transactional(readOnly=true) public ServerResponse get(UUID user,UUID id){return ServerResponse.from(owned(user,id));}
+    @Transactional(readOnly=true) public SshCredentials credentials(UUID user,UUID id){return decrypt(owned(user,id));}
     @Transactional public ServerResponse create(UUID user,ServerRequest request){
         validateCredentials(request.credentials());
         Server server=repository.save(new Server(user,request.name().trim(),request.host().trim(),request.sshPort(),request.sshUser().trim(),encrypt(request.credentials())));

@@ -1,0 +1,26 @@
+spring:
+  application:
+    name: wg-manager
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/wgmanager}
+    username: ${DB_USER:wgmanager}
+    password: ${DB_PASSWORD:wgmanager}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate   # схему ведёт только Flyway
+  flyway:
+    enabled: true
+  threads:
+    virtual:
+      enabled: true        # виртуальные потоки Java 21
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+app:
+  master-key: ${APP_MASTER_KEY}   # 32 байта в base64, хранится вне БД
+  jwt-secret: ${JWT_SECRET}

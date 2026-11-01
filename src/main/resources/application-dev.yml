@@ -1,0 +1,8 @@
+# ТОЛЬКО для локальной разработки. Не использовать в проде!
+app:
+  master-key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+  jwt-secret: dev-only-jwt-secret-dev-only-jwt-secret-dev-only-jwt-secret
+
+logging:
+  level:
+    com.example.wgmanager: DEBUG

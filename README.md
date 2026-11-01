@@ -229,11 +229,14 @@ cd frontend && npm install && npm run dev
 
 ### API
 
-Этап 1 реализован. Публичные маршруты: `POST /api/auth/register`, `POST /api/auth/login`, `/actuator/health`, OpenAPI. Остальные `/api/**` требуют заголовок `Authorization: Bearer <JWT>`.
+Этапы 1 и 2 реализованы. Публичные маршруты: `POST /api/auth/register`, `POST /api/auth/login`, `/actuator/health`, OpenAPI. Остальные `/api/**` требуют заголовок `Authorization: Bearer <JWT>`.
 
 | Метод и путь | Этап | Назначение |
 | --- | --- | --- |
 | `POST /api/auth/register`, `POST /api/auth/login` | 1 | регистрация и JWT |
 | `GET /api/me` | 1 | текущий пользователь (требует JWT) |
-| `/api/servers` | 2–3 | VPS и provisioning |
+| `GET, POST /api/servers` | 2 | список серверов и добавление с SSH-проверкой |
+| `GET, PUT, DELETE /api/servers/{id}` | 2 | чтение, изменение и удаление сервера |
 | `/api/peers` | 4 | клиенты, conf, QR |
+
+Для создания сервер принимает `name`, `host`, `sshPort`, `sshUser` и `credentials`, где нужно передать ровно одно из полей `password` или `privateKey` (для ключа можно передать `passphrase`). При первом SSH-подключении fingerprint ключа хоста закрепляется (TOFU); при изменении сервера новый ключ хоста не принимается. Проверка выполняет только фиксированную команду чтения `/etc/os-release` и поддерживает Ubuntu/Debian. Учётные данные хранятся в зашифрованном виде и не возвращаются API. При ошибке SSH сервер сохраняется со статусом `ERROR`.

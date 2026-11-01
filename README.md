@@ -139,13 +139,15 @@ WireGuard Manager позволяет пользователю подключит
 
 Реализован endpoint `POST /api/servers/{id}/provisioning/wireguard`. Требуется доступ по SSH с `sudo -n` на команды установки и настройки; provisioning идемпотентно создаёт `wg0` с адресом `10.66.0.1/24`, портом `51820`, включает IPv4 forwarding и NAT. Существующая конфигурация `wg0`, не созданная WireGuard Manager, не перезаписывается. Приватный ключ остаётся в конфигурации на VPS и дополнительно хранится в БД только в AES-GCM шифрованном виде. Ответ содержит только публичный ключ.
 
-### Этап 4. Пиры
+### Этап 4. Пиры (реализовано)
 
 - Выдача свободного IP из subnet; уникальность `(interface_id, allowed_ip)`.
 - Создание, отключение, удаление пира на сервере.
 - Выдача `.conf` и QR (ZXing). Приватный ключ клиента не сохранять.
 
 **Критерий:** пользователь скачивает conf/QR, пир виден в `wg show`.
+
+Пир создаётся через `POST /api/servers/{id}/peers` с JSON `{"name":"телефон"}`. В ответе `.conf` и QR PNG (Base64) выдаются один раз; приватный ключ клиента не сохраняется. Повторно получить ключ или конфигурацию невозможно. Список: `GET /api/servers/{id}/peers`; включение/отключение: `PATCH /api/peers/{peerId}` с `{"enabled":false}`; удаление: `DELETE /api/peers/{peerId}`. Изменения применяются к живому интерфейсу через `wg syncconf` и сохраняются в `wg0.conf`.
 
 ### Этап 5. Мониторинг и UI
 
@@ -231,7 +233,7 @@ cd frontend && npm install && npm run dev
 
 ### API
 
-Этапы 1–3 реализованы. Публичные маршруты: `POST /api/auth/register`, `POST /api/auth/login`, `/actuator/health`, OpenAPI. Остальные `/api/**` требуют заголовок `Authorization: Bearer <JWT>`.
+Этапы 1–4 реализованы. Публичные маршруты: `POST /api/auth/register`, `POST /api/auth/login`, `/actuator/health`, OpenAPI. Остальные `/api/**` требуют заголовок `Authorization: Bearer <JWT>`.
 
 | Метод и путь | Этап | Назначение |
 | --- | --- | --- |
@@ -240,6 +242,7 @@ cd frontend && npm install && npm run dev
 | `GET, POST /api/servers` | 2 | список серверов и добавление с SSH-проверкой |
 | `GET, PUT, DELETE /api/servers/{id}` | 2 | чтение, изменение и удаление сервера |
 | `POST /api/servers/{id}/provisioning/wireguard` | 3 | установить и настроить WireGuard |
-| `/api/peers` | 4 | клиенты, conf, QR |
+| `GET, POST /api/servers/{id}/peers` | 4 | список пиров и создание с одноразовыми conf/QR |
+| `PATCH, DELETE /api/peers/{peerId}` | 4 | включение, отключение и удаление пира |
 
 Для создания сервер принимает `name`, `host`, `sshPort`, `sshUser` и `credentials`, где нужно передать ровно одно из полей `password` или `privateKey` (для ключа можно передать `passphrase`). При первом SSH-подключении fingerprint ключа хоста закрепляется (TOFU); при изменении сервера новый ключ хоста не принимается. Проверка выполняет только фиксированную команду чтения `/etc/os-release` и поддерживает Ubuntu/Debian. Учётные данные хранятся в зашифрованном виде и не возвращаются API. При ошибке SSH сервер сохраняется со статусом `ERROR`.

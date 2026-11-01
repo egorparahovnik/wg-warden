@@ -58,7 +58,7 @@ public class SshClientService {
                     return out.toString(StandardCharsets.UTF_8).trim();
                 }
             }
-        } catch(Exception e) { throw new SshConnectionException("WireGuard provisioning failed",e); }
+        } catch(Exception e) { throw new SshConnectionException("remote SSH command failed",e); }
     }
     private void authenticate(ClientSession session,SshCredentials credentials) throws Exception {
         if(credentials.privateKey()!=null&&!credentials.privateKey().isBlank()) {

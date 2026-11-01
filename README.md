@@ -36,11 +36,11 @@ WireGuard Manager позволяет пользователю подключит
 
 | Слой | Технологии |
 | --- | --- |
-| Backend | Java 25, Spring Boot 4.x, Spring Security (JWT), Spring Data JPA, Flyway |
-| SSH | Apache MINA SSHD или mwiede/jsch |
+| Backend | Java 21, Spring Boot 4.x, Spring Security (JWT), Spring Data JPA, Flyway |
+| SSH | Apache MINA SSHD |
 | База данных | PostgreSQL (при необходимости TimescaleDB для метрик) |
 | Frontend | React, TypeScript, Vite, TanStack Query, Tailwind, shadcn/ui, Recharts |
-| Реальное время | SSE или WebSocket |
+| Реальное время | SSE |
 | Прочее | ZXing (QR-коды), springdoc-openapi, Docker Compose, Testcontainers |
 
 ## 4. Архитектура
@@ -67,21 +67,21 @@ WireGuard Manager позволяет пользователю подключит
 
 ## 5. Модель данных (черновик)
 
-| Таблица | Назначение | Ключевые поля |
-| --- | --- | --- |
-| `users` | Пользователи | id, email, password\_hash, created\_at |
-| `servers` | Подключённые VPS | id, user\_id, name, host, ssh\_port, ssh\_user, encrypted\_credentials, host\_key\_fingerprint, status |
-| `wg_interfaces` | Интерфейсы WireGuard на сервере | id, server\_id, name, listen\_port, subnet, public\_key, encrypted\_private\_key |
-| `peers` | Клиенты | id, interface\_id, name, public\_key, allowed\_ip, enabled, expires\_at |
-| `server_metrics` | Метрики сервера (временной ряд) | server\_id, ts, cpu, ram, disk, net\_rx, net\_tx |
-| `peer_metrics` | Метрики пиров (временной ряд) | peer\_id, ts, rx\_bytes, tx\_bytes, last\_handshake |
-| `audit_log` | Журнал действий | id, user\_id, action, target, ts |
+| Таблица | Назначение | Ключевые поля | Статус |
+| --- | --- | --- | --- |
+| `users` | Пользователи | id, email, password_hash, created_at | есть в `V1__init.sql` |
+| `servers` | Подключённые VPS | id, user_id, name, host, ssh_port, ssh_user, encrypted_credentials, host_key_fingerprint, status | есть в `V1__init.sql` |
+| `wg_interfaces` | Интерфейсы WireGuard на сервере | id, server_id, name, listen_port, subnet, public_key, encrypted_private_key | есть в `V1__init.sql` |
+| `peers` | Клиенты | id, interface_id, name, public_key, allowed_ip, enabled, expires_at | есть в `V1__init.sql` |
+| `server_metrics` | Метрики сервера (временной ряд) | server_id, ts, cpu, ram, disk, net_rx, net_tx | этап 5 |
+| `peer_metrics` | Метрики пиров (временной ряд) | peer_id, ts, rx_bytes, tx_bytes, last_handshake | этап 5 |
+| `audit_log` | Журнал действий | id, user_id, action, target, ts | этап 6 |
 
 На `(interface_id, allowed_ip)` ставится уникальный индекс для защиты от конфликтов при выдаче адресов.
 
 ## 6. Безопасность
 
-- SSH-ключи и приватные ключи WireGuard шифруются (AES-GCM), мастер-ключ хранится вне БД (переменная окружения, Vault или KMS).
+- SSH-ключи и приватные ключи WireGuard шифруются (AES-GCM), мастер-ключ `APP_MASTER_KEY` хранится вне БД (переменная окружения, Vault или KMS).
 - По возможности ключи клиента генерируются на его стороне, сервису передаётся только публичный ключ. Если ключи генерирует сервис, конфиг показывается один раз, приватный ключ клиента не сохраняется.
 - Для доступа к VPS рекомендуется отдельный пользователь с sudo только на необходимые команды, а не root.
 - Обязательная проверка host key при SSH-подключении.
@@ -97,25 +97,143 @@ WireGuard Manager позволяет пользователю подключит
 
 ## 8. Поддерживаемые ОС (план)
 
-- Ubuntu 
-- Debian 
+- Ubuntu
+- Debian
 
-## 9. План разработки
+## 9. Пошаговый план разработки
 
-| Этап | Содержание |
-| --- | --- |
-| 1. Основа | Каркас проекта, БД и миграции, аутентификация |
-| 2. Серверы | Добавление VPS, SSH-слой, установка WireGuard |
-| 3. Пиры | Создание и удаление клиентов, конфиги, QR-коды |
-| 4. Мониторинг | Сбор метрик, графики, живые обновления |
-| 5. Улучшения | Агент, лимиты, уведомления, роли |
+Порядок этапов совпадает с зависимостями модулей: auth → servers → ssh → provisioning → peers → monitoring → frontend.
+
+### Этап 0. Каркас (сделано)
+
+- Maven / Spring Boot 4.1.x, Java 21, Docker Compose с PostgreSQL 16.
+- Flyway-миграция `V1__init.sql`: `users`, `servers`, `wg_interfaces`, `peers`.
+- `CryptoService` (AES-256-GCM), заглушка `SecurityConfig`, пакеты-заготовки `auth`, `ssh`, `server`, `peer`, `monitoring`.
+- `@EnableScheduling` в приложении (сбор метрик — на этапе 5).
+
+**Критерий:** `./mvnw test` поднимает контекст на Testcontainers и применяет миграции.
+
+### Этап 1. Аутентификация (сделано)
+
+- Entity и репозиторий `User`, регистрация и логин.
+- JWT: выдача токена, фильтр (закрыть TODO в `SecurityConfig`). Argon2 уже подключён.
+- Публичные маршруты: `/api/auth/**`, `/actuator/health`, OpenAPI.
+
+**Критерий:** `POST /api/auth/register` и `POST /api/auth/login` работают; остальные `/api/**` требуют JWT; есть тесты на Testcontainers.
+
+### Этап 2. Серверы и SSH
+
+- Клиент Apache MINA SSHD: проверка host key, выполнение команд.
+- CRUD серверов; SSH-креды шифруются через `CryptoService`.
+- Определение Ubuntu/Debian. Статусы: `PENDING` → `ONLINE` / `ERROR`.
+
+**Критерий:** пользователь добавляет VPS и видит ОС и статус без установки WireGuard.
+
+### Этап 3. Provisioning WireGuard
+
+- Идемпотентная установка пакетов на Ubuntu/Debian.
+- Генерация ключей интерфейса, `wg0`, IP forwarding и NAT, запуск через `wg-quick` / `systemctl`.
+- Последующие изменения — через `wg set` или `wg syncconf`, без разрыва активных сессий.
+
+**Критерий:** на чистом Ubuntu/Debian поднимается интерфейс `wg0`.
+
+### Этап 4. Пиры
+
+- Выдача свободного IP из subnet; уникальность `(interface_id, allowed_ip)`.
+- Создание, отключение, удаление пира на сервере.
+- Выдача `.conf` и QR (ZXing). Приватный ключ клиента не сохранять.
+
+**Критерий:** пользователь скачивает conf/QR, пир виден в `wg show`.
+
+### Этап 5. Мониторинг и UI
+
+- Миграции `server_metrics` и `peer_metrics`.
+- Планировщик: `wg show all dump` + CPU/RAM/диск.
+- SSE для живых обновлений.
+- Frontend: React, Vite, TypeScript, TanStack Query, Tailwind, shadcn/ui, Recharts.
+
+**Критерий:** в UI список серверов и пиров, графики и живой статус.
+
+### Этап 6. Прод-гигиена и бэклог
+
+- Таблица `audit_log`, rate limit логина, security headers.
+- Далее из раздела 2: агент вместо постоянного SSH, лимиты трафика и срока пиров, уведомления, роли.
 
 ## 10. Запуск для разработки
 
+### Требования
+
+- JDK 21
+- Maven Wrapper (`./mvnw` в корне репозитория)
+- Docker (для PostgreSQL и Testcontainers)
+- Node.js 20+ — когда появится каталог `frontend`
+
+### База данных
+
 ```bash
-docker compose up -d db          # PostgreSQL
-./mvnw spring-boot:run           # backend
-cd frontend && npm install && npm run dev   # frontend
+docker compose up -d db
 ```
 
-Переменные окружения: `DB_URL`, `DB_USER`, `DB_PASSWORD`, `JWT_SECRET`, `MASTER_ENCRYPTION_KEY`.
+Контейнер `wgmanager-db`: БД/пользователь/пароль `wgmanager`, порт `5432`. Healthcheck — `pg_isready -U wgmanager`.
+
+Остановка: `docker compose down`. Данные хранятся в томе `pgdata`.
+
+### Секреты
+
+Скопируйте `.env.example` в `.env` и заполните значения.
+
+| Переменная | Назначение |
+| --- | --- |
+| `DB_URL` | JDBC, по умолчанию `jdbc:postgresql://localhost:5432/wgmanager` |
+| `DB_USER` / `DB_PASSWORD` | учётная запись PostgreSQL |
+| `APP_MASTER_KEY` | 32 байта в base64, AES-GCM для SSH- и WG-ключей |
+| `JWT_SECRET` | секрет подписи JWT |
+
+Генерация ключей:
+
+```bash
+openssl rand -base64 32   # APP_MASTER_KEY
+openssl rand -base64 48   # JWT_SECRET
+```
+
+Для локальной разработки профиль `dev` задаёт тестовые ключи в `src/main/resources/application-dev.yml`. Их нельзя использовать в проде.
+
+### Backend
+
+```bash
+./mvnw spring-boot:run -Dspring-boot.run.profiles=dev
+```
+
+Сервис слушает порт **8080**.
+
+| URL | Описание |
+| --- | --- |
+| http://localhost:8080/actuator/health | health |
+| http://localhost:8080/swagger-ui.html | OpenAPI UI |
+
+### Frontend
+
+Каталога `frontend` пока нет (этап 5). После появления:
+
+```bash
+cd frontend && npm install && npm run dev
+```
+
+### Тесты
+
+```bash
+./mvnw test
+```
+
+Интеграционные тесты поднимают PostgreSQL 16 через Testcontainers и применяют Flyway.
+
+### API
+
+Этап 1 реализован. Публичные маршруты: `POST /api/auth/register`, `POST /api/auth/login`, `/actuator/health`, OpenAPI. Остальные `/api/**` требуют заголовок `Authorization: Bearer <JWT>`.
+
+| Метод и путь | Этап | Назначение |
+| --- | --- | --- |
+| `POST /api/auth/register`, `POST /api/auth/login` | 1 | регистрация и JWT |
+| `GET /api/me` | 1 | текущий пользователь (требует JWT) |
+| `/api/servers` | 2–3 | VPS и provisioning |
+| `/api/peers` | 4 | клиенты, conf, QR |

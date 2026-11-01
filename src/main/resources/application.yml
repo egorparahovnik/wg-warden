@@ -15,6 +15,9 @@ spring:
     virtual:
       enabled: true        # виртуальные потоки Java 21
 
+server:
+  port: ${SERVER_PORT:8081}
+
 management:
   endpoints:
     web:
@@ -25,3 +28,5 @@ app:
   master-key: ${APP_MASTER_KEY}   # 32 байта в base64, хранится вне БД
   jwt-secret: ${JWT_SECRET}
   jwt-expiration: 24h
+  monitoring:
+    interval: ${MONITORING_INTERVAL:60s}

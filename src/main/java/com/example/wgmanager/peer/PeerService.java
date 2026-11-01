@@ -20,6 +20,7 @@ import java.util.*;
 
 @Service
 public class PeerService {
+    private static final String APP_INTERFACE="wg-warden0";
     private final PeerRepository peers; private final WgInterfaceRepository interfaces; private final ServerRepository servers;
     private final SshClientService ssh; private final ServerService serverService; private final SecureRandom random=new SecureRandom();
     public PeerService(PeerRepository peers,WgInterfaceRepository interfaces,ServerRepository servers,SshClientService ssh,ServerService serverService){this.peers=peers;this.interfaces=interfaces;this.servers=servers;this.ssh=ssh;this.serverService=serverService;}
@@ -27,14 +28,14 @@ public class PeerService {
     @Transactional(readOnly=true)
     public List<PeerResponse> list(UUID userId,UUID serverId){
         Server server=servers.findByIdAndUserId(serverId,userId).orElseThrow(ServerNotFoundException::new);
-        WgInterface wg=interfaces.findByServerIdAndName(server.getId(),"wg0").orElse(null);
+        WgInterface wg=interfaces.findByServerIdAndName(server.getId(),APP_INTERFACE).orElse(null);
         return wg==null?List.of():peers.findAllByInterfaceIdOrderByCreatedAtDesc(wg.getId()).stream().map(PeerResponse::from).toList();
     }
 
     @Transactional
     public PeerCreationResponse create(UUID userId,UUID serverId,PeerRequest request){
         Server server=servers.findByIdAndUserId(serverId,userId).orElseThrow(ServerNotFoundException::new);
-        WgInterface wg=interfaces.findByServerIdAndName(serverId,"wg0").orElseThrow(()->new IllegalStateException("provision WireGuard on this server first"));
+        WgInterface wg=interfaces.findByServerIdAndName(serverId,APP_INTERFACE).orElseThrow(()->new IllegalStateException("provision WireGuard on this server first"));
         WgInterface locked=interfaces.lockByIdAndServerId(wg.getId(),serverId).orElseThrow(()->new IllegalStateException("WireGuard interface not found"));
         ensurePinned(server);
         String ip=nextAddress(locked);
@@ -112,14 +113,14 @@ public class PeerService {
         }catch(Exception e){throw new IllegalStateException("could not create peer QR code",e);}
     }
     private String addPeerScript(String publicKey,String ip){
-        return "set -euo pipefail\nexec 9>/run/lock/wg-manager-wg0.lock\nflock -x 9\nconf=/etc/wireguard/wg0.conf\n"+
+        return "set -euo pipefail\nexec 9>/run/lock/wg-manager-wg-warden0.lock\nflock -x 9\nconf=/etc/wireguard/wg-warden0.conf\n"+
                 "grep -qF 'PublicKey = "+publicKey+"' \"$conf\" || cat >> \"$conf\" <<'WG_PEER'\n[Peer]\nPublicKey = "+publicKey+"\nAllowedIPs = "+ip+"/32\nWG_PEER\n"+
-                "wg syncconf wg0 <(wg-quick strip wg0)\n";
+                "wg syncconf wg-warden0 <(wg-quick strip wg-warden0)\n";
     }
     private String removePeerScript(String publicKey){
-        return "set -euo pipefail\nexec 9>/run/lock/wg-manager-wg0.lock\nflock -x 9\nconf=/etc/wireguard/wg0.conf\ntmp=$(mktemp)\n"+
+        return "set -euo pipefail\nexec 9>/run/lock/wg-manager-wg-warden0.lock\nflock -x 9\nconf=/etc/wireguard/wg-warden0.conf\ntmp=$(mktemp)\n"+
                 "awk -v key='"+publicKey+"' 'function flush(){if(!drop)for(i=1;i<=n;i++)print lines[i];delete lines;n=0;drop=0} " +
                 "/^\\[Peer\\][[:space:]]*$/ {flush();peer=1;lines[++n]=$0;next} peer {lines[++n]=$0;if($1==\"PublicKey\"&&$2==\"=\"&&$3==key)drop=1;next} {print} END{flush()}' \"$conf\" > \"$tmp\"\n"+
-                "install -m 600 \"$tmp\" \"$conf\"; rm -f \"$tmp\"\nwg syncconf wg0 <(wg-quick strip wg0)\n";
+                "install -m 600 \"$tmp\" \"$conf\"; rm -f \"$tmp\"\nwg syncconf wg-warden0 <(wg-quick strip wg-warden0)\n";
     }
 }

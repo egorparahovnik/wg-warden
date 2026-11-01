@@ -70,11 +70,11 @@ WireGuard Manager позволяет пользователю подключит
 | Таблица | Назначение | Ключевые поля | Статус |
 | --- | --- | --- | --- |
 | `users` | Пользователи | id, email, password_hash, created_at | есть в `V1__init.sql` |
-| `servers` | Подключённые VPS | id, user_id, name, host, ssh_port, ssh_user, encrypted_credentials, host_key_fingerprint, status | есть в `V1__init.sql` |
+| `servers` | Подключённые VPS | id, user_id, name, host, ssh_port, ssh_user, encrypted_credentials, host_key_fingerprint, status, operating_system, connection_error | `V1`–`V3` |
 | `wg_interfaces` | Интерфейсы WireGuard на сервере | id, server_id, name, listen_port, subnet, public_key, encrypted_private_key | есть в `V1__init.sql` |
 | `peers` | Клиенты | id, interface_id, name, public_key, allowed_ip, enabled, expires_at | есть в `V1__init.sql` |
-| `server_metrics` | Метрики сервера (временной ряд) | server_id, ts, cpu, ram, disk, net_rx, net_tx | этап 5 |
-| `peer_metrics` | Метрики пиров (временной ряд) | peer_id, ts, rx_bytes, tx_bytes, last_handshake | этап 5 |
+| `server_metrics` | Метрики сервера (временной ряд) | server_id, ts, cpu, ram, disk, net_rx, net_tx | `V3__monitoring_metrics.sql` |
+| `peer_metrics` | Метрики пиров (временной ряд) | peer_id, ts, rx_bytes, tx_bytes, last_handshake | `V3__monitoring_metrics.sql` |
 | `audit_log` | Журнал действий | id, user_id, action, target, ts | этап 6 |
 
 На `(interface_id, allowed_ip)` ставится уникальный индекс для защиты от конфликтов при выдаче адресов.
@@ -149,14 +149,25 @@ WireGuard Manager позволяет пользователю подключит
 
 Пир создаётся через `POST /api/servers/{id}/peers` с JSON `{"name":"телефон"}`. В ответе `.conf` и QR PNG (Base64) выдаются один раз; приватный ключ клиента не сохраняется. Повторно получить ключ или конфигурацию невозможно. Список: `GET /api/servers/{id}/peers`; включение/отключение: `PATCH /api/peers/{peerId}` с `{"enabled":false}`; удаление: `DELETE /api/peers/{peerId}`. Изменения применяются к живому интерфейсу через `wg syncconf` и сохраняются в `wg0.conf`.
 
-### Этап 5. Мониторинг и UI
+### Этап 5. Мониторинг и UI (реализовано)
 
 - Миграции `server_metrics` и `peer_metrics`.
 - Планировщик: `wg show all dump` + CPU/RAM/диск.
 - SSE для живых обновлений.
 - Frontend: React, Vite, TypeScript, TanStack Query, Tailwind, shadcn/ui, Recharts.
 
-**Критерий:** в UI список серверов и пиров, графики и живой статус.
+**Требования к frontend:**
+
+- **Стиль:** тёмный интерфейс с терминальной эстетикой, как в OpenCode: моноширинная типографика, компактные панели, сдержанные акцентные цвета и ясные индикаторы статусов. Это веб-панель управления, а не эмулятор терминала.
+- **Навигация:** список серверов с состояниями `PENDING`, `ONLINE`, `ERROR`; выбор сервера открывает его обзор, пиры и метрики. Ошибки подключения и загрузки должны быть видны, а не заменяться пустыми или успешными состояниями.
+- **Добавление сервера:** заметное действие открывает простую форму с именем, адресом, SSH-портом (по умолчанию `22`), SSH-пользователем и учётными данными. Форма принимает пароль либо приватный ключ (не оба сразу); для ключа доступно поле passphrase. Секреты скрыты при вводе. Во время проверки SSH показывается ход операции, затем — результат и определённая ОС либо понятная ошибка.
+- **Мониторинг:** для выбранного сервера показываются CPU, RAM, диск и сетевой трафик; для каждого пира — состояние онлайн/офлайн, время последнего handshake и принятый/отправленный трафик. История метрик отображается на графиках, актуальные данные поступают через SSE; при потере соединения интерфейс показывает, что обновления приостановлены.
+- **Пиры:** список позволяет увидеть состояние клиентов и выполнить доступные действия — добавить, включить/отключить или удалить пир. При создании отображаются выданные `.conf` и QR-код; секрет конфигурации не запрашивается повторно и не сохраняется интерфейсом.
+- **Состояния интерфейса:** предусмотреть загрузку, пустые списки, ошибки и недоступность сервера; обновление данных не должно сбрасывать выбранный сервер или мешать работе с формами.
+
+**Критерий:** пользователь может добавить сервер и увидеть результат SSH-проверки, открыть его обзор, просмотреть список пиров и метрики с графиками; статусы и данные обновляются в реальном времени через SSE.
+
+Сбор выполняется раз в `MONITORING_INTERVAL` (по умолчанию `60s`) с закреплённым SSH host key и `sudo -n`. Сохраняются CPU load, RAM, заполнение `/`, сетевые байты интерфейсов кроме `lo` и WireGuard, трафик пиров и время handshake. Peer считается online при handshake за последние 3 минуты. История сервера и пира доступна за 24 часа по умолчанию (запрос ограничен 7 днями); SSE сообщает об ошибках связи и возобновлении. Frontend показывает состояния загрузки, пустые данные и ошибки, сохраняет выбранный сервер при обновлении и автоматически переподключает SSE.
 
 ### Этап 6. Прод-гигиена и бэклог
 
@@ -170,7 +181,7 @@ WireGuard Manager позволяет пользователю подключит
 - JDK 21
 - Maven Wrapper (`./mvnw` в корне репозитория)
 - Docker (для PostgreSQL и Testcontainers)
-- Node.js 20+ — когда появится каталог `frontend`
+- Node.js 20+ и npm — для `frontend`
 
 ### База данных
 
@@ -192,6 +203,7 @@ docker compose up -d db
 | `DB_USER` / `DB_PASSWORD` | учётная запись PostgreSQL |
 | `APP_MASTER_KEY` | 32 байта в base64, AES-GCM для SSH- и WG-ключей |
 | `JWT_SECRET` | секрет подписи JWT |
+| `MONITORING_INTERVAL` | интервал опроса подключённых серверов, по умолчанию `60s` |
 
 Генерация ключей:
 
@@ -208,16 +220,16 @@ openssl rand -base64 48   # JWT_SECRET
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=dev
 ```
 
-Сервис слушает порт **8080**.
+Сервис слушает порт **8081** по умолчанию. Его можно переопределить переменной `SERVER_PORT`.
 
 | URL | Описание |
 | --- | --- |
-| http://localhost:8080/actuator/health | health |
-| http://localhost:8080/swagger-ui.html | OpenAPI UI |
+| http://localhost:8081/actuator/health | health |
+| http://localhost:8081/swagger-ui.html | OpenAPI UI |
 
 ### Frontend
 
-Каталога `frontend` пока нет (этап 5). После появления:
+Для веб-интерфейса сначала запустите backend, затем:
 
 ```bash
 cd frontend && npm install && npm run dev
@@ -233,7 +245,7 @@ cd frontend && npm install && npm run dev
 
 ### API
 
-Этапы 1–4 реализованы. Публичные маршруты: `POST /api/auth/register`, `POST /api/auth/login`, `/actuator/health`, OpenAPI. Остальные `/api/**` требуют заголовок `Authorization: Bearer <JWT>`.
+Этапы 1–5 реализованы. Публичные маршруты: `POST /api/auth/register`, `POST /api/auth/login`, `/actuator/health`, OpenAPI. Остальные `/api/**` требуют заголовок `Authorization: Bearer <JWT>`.
 
 | Метод и путь | Этап | Назначение |
 | --- | --- | --- |
@@ -244,5 +256,7 @@ cd frontend && npm install && npm run dev
 | `POST /api/servers/{id}/provisioning/wireguard` | 3 | установить и настроить WireGuard |
 | `GET, POST /api/servers/{id}/peers` | 4 | список пиров и создание с одноразовыми conf/QR |
 | `PATCH, DELETE /api/peers/{peerId}` | 4 | включение, отключение и удаление пира |
+| `GET /api/servers/{id}/metrics`, `GET /api/peers/{id}/metrics` | 5 | история метрик, последние 24 часа по умолчанию |
+| `GET /api/events` | 5 | SSE-события статуса и метрик для владельца сервера |
 
 Для создания сервер принимает `name`, `host`, `sshPort`, `sshUser` и `credentials`, где нужно передать ровно одно из полей `password` или `privateKey` (для ключа можно передать `passphrase`). При первом SSH-подключении fingerprint ключа хоста закрепляется (TOFU); при изменении сервера новый ключ хоста не принимается. Проверка выполняет только фиксированную команду чтения `/etc/os-release` и поддерживает Ubuntu/Debian. Учётные данные хранятся в зашифрованном виде и не возвращаются API. При ошибке SSH сервер сохраняется со статусом `ERROR`.

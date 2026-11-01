@@ -3,6 +3,7 @@ package com.example.wgmanager.server;
 import com.example.wgmanager.crypto.CryptoService;
 import com.example.wgmanager.ssh.SshClientService;
 import com.example.wgmanager.ssh.SshCredentials;
+import com.example.wgmanager.ssh.SshConnectionException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,7 +22,7 @@ public class ServerService {
         validateCredentials(request.credentials());
         Server server=repository.save(new Server(user,request.name().trim(),request.host().trim(),request.sshPort(),request.sshUser().trim(),encrypt(request.credentials())));
         try { var result=ssh.probe(server.getHost(),server.getSshPort(),server.getSshUser(),toCredentials(request.credentials()),null); server.connectionResult(result.fingerprint(),result.operatingSystem()); }
-        catch(RuntimeException e){server.markError();}
+        catch(RuntimeException e){server.markError(connectionError(e));}
         return ServerResponse.from(server);
     }
     @Transactional public ServerResponse update(UUID user,UUID id,ServerRequest request){
@@ -30,7 +31,7 @@ public class ServerService {
         server.update(request.name().trim(),request.host().trim(),request.sshPort(),request.sshUser().trim(),encrypted);
         SshCredentials credentials=request.credentials()==null?decrypt(server):toCredentials(request.credentials());
         try {var result=ssh.probe(server.getHost(),server.getSshPort(),server.getSshUser(),credentials,server.getHostKeyFingerprint());server.connectionResult(result.fingerprint(),result.operatingSystem());}
-        catch(RuntimeException e){server.markError();}
+        catch(RuntimeException e){server.markError(connectionError(e));}
         return ServerResponse.from(server);
     }
     @Transactional public void delete(UUID user,UUID id){repository.delete(owned(user,id));}
@@ -39,4 +40,5 @@ public class ServerService {
     private byte[] encrypt(ServerRequest.Credentials c){try{return crypto.encrypt(mapper.writeValueAsBytes(c));}catch(Exception e){throw new IllegalStateException("could not encrypt SSH credentials",e);}}
     private SshCredentials decrypt(Server s){try{return mapper.readValue(new String(crypto.decrypt(s.getEncryptedCredentials()),StandardCharsets.UTF_8),SshCredentials.class);}catch(Exception e){throw new IllegalStateException("could not read SSH credentials",e);}}
     private SshCredentials toCredentials(ServerRequest.Credentials c){return new SshCredentials(c.password(),c.privateKey(),c.passphrase());}
+    private String connectionError(RuntimeException error){return error instanceof SshConnectionException?error.getMessage():"SSH connection failed; check credentials, host key and server availability";}
 }

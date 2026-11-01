@@ -13,9 +13,9 @@ import java.util.UUID;
 
 @Service
 public class ProvisioningService {
-    private static final String INTERFACE="wg0";
-    private static final int PORT=51820;
-    private static final String SUBNET="10.66.0.0/24";
+    private static final String INTERFACE="wg-warden0";
+    private static final int PORT=51821;
+    private static final String SUBNET="10.67.0.0/24";
     private final ServerRepository servers; private final WgInterfaceRepository interfaces; private final SshClientService ssh; private final CryptoService crypto; private final com.example.wgmanager.server.ServerService serverService;
     public ProvisioningService(ServerRepository servers,WgInterfaceRepository interfaces,SshClientService ssh,CryptoService crypto,com.example.wgmanager.server.ServerService serverService){this.servers=servers;this.interfaces=interfaces;this.ssh=ssh;this.crypto=crypto;this.serverService=serverService;}
 
@@ -43,11 +43,11 @@ public class ProvisioningService {
               apt-get install -y wireguard iptables
             fi
             install -d -m 700 /etc/wireguard
-            conf=/etc/wireguard/wg0.conf
+            conf=/etc/wireguard/wg-warden0.conf
             if [ -e "$conf" ]; then
-              grep -qx '# Managed-by: wg-manager' "$conf" || { echo 'wg0 configuration already exists and is not managed by wg-manager' >&2; exit 20; }
+              grep -qx '# Managed-by: wg-manager' "$conf" || { echo 'wg-warden0 configuration already exists and is not managed by wg-manager' >&2; exit 20; }
               private_key=$(awk -F ' = ' '$1 == "PrivateKey" {print $2; exit}' "$conf")
-              [ -n "$private_key" ] || { echo 'managed wg0 configuration has no private key' >&2; exit 21; }
+              [ -n "$private_key" ] || { echo 'managed wg-warden0 configuration has no private key' >&2; exit 21; }
             else
               private_key=$(wg genkey)
             fi
@@ -58,18 +58,18 @@ public class ProvisioningService {
             cat > "$conf" <<EOF
             # Managed-by: wg-manager
             [Interface]
-            Address = 10.66.0.1/24
-            ListenPort = 51820
+            Address = 10.67.0.1/24
+            ListenPort = 51821
             PrivateKey = $private_key
-            PostUp = iptables -t nat -C POSTROUTING -s 10.66.0.0/24 -o $egress -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s 10.66.0.0/24 -o $egress -j MASQUERADE
-            PostDown = iptables -t nat -D POSTROUTING -s 10.66.0.0/24 -o $egress -j MASQUERADE 2>/dev/null || true
+            PostUp = iptables -t nat -C POSTROUTING -s 10.67.0.0/24 -o $egress -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s 10.67.0.0/24 -o $egress -j MASQUERADE
+            PostDown = iptables -t nat -D POSTROUTING -s 10.67.0.0/24 -o $egress -j MASQUERADE 2>/dev/null || true
             EOF
             chmod 600 "$conf"
             printf '%s\\n' 'net.ipv4.ip_forward=1' > /etc/sysctl.d/99-wg-manager.conf
             sysctl -p /etc/sysctl.d/99-wg-manager.conf >/dev/null
-            systemctl enable wg-quick@wg0 >/dev/null
-            if ! systemctl is-active --quiet wg-quick@wg0; then
-              systemctl start wg-quick@wg0
+            systemctl enable wg-quick@wg-warden0 >/dev/null
+            if ! systemctl is-active --quiet wg-quick@wg-warden0; then
+              systemctl start wg-quick@wg-warden0
             fi
             printf 'WG_PRIVATE=%s\\nWG_PUBLIC=%s\\n' "$private_key" "$public_key"
             """;

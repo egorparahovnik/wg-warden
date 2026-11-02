@@ -42,7 +42,7 @@ public class PeerService {
         KeyPair pair=generateKeyPair();
         String name=request.name().trim();
         ssh.runSudoScript(server.getHost(),server.getSshPort(),server.getSshUser(),serverService.credentials(userId,serverId),server.getHostKeyFingerprint(),addPeerScript(locked.getName(),pair.publicKey(),ip));
-        Peer peer=new Peer(locked.getId(),name,pair.publicKey(),ip+"/32"); peer.setEncryptedPrivateKey(crypto.encrypt(pair.privateKey().getBytes(java.nio.charset.StandardCharsets.UTF_8))); peer=peers.save(peer);
+        Peer peer=new Peer(locked.getId(),name,pair.publicKey(),ip+"/32"); peer.setEncryptedPrivateKey(crypto.encrypt(pair.privateKey().getBytes(java.nio.charset.StandardCharsets.UTF_8))); peer.setTrafficLimitBytes(request.trafficLimitBytes()!=null&&request.trafficLimitBytes()>0?request.trafficLimitBytes():null); peer.setExpiresAt(request.expiresAt()); peer=peers.save(peer);
         String config=clientConfig(server,locked,ip,pair.privateKey());
         return new PeerCreationResponse(PeerResponse.from(peer),config,qr(config));
     }
@@ -87,6 +87,11 @@ public class PeerService {
         WgInterface wg=interfaces.findById(peer.getInterfaceId()).orElseThrow(PeerNotFoundException::new);
         ssh.runSudoScript(server.getHost(),server.getSshPort(),server.getSshUser(),serverService.credentials(userId,serverId),server.getHostKeyFingerprint(),removePeerScript(wg.getName(),peer.getPublicKey()));
         peers.delete(peer);
+    }
+
+    public void disableForLimit(UUID userId,Peer peer){
+        if(!peer.isEnabled())return; UUID serverId=serverIdFor(userId,peer); Server server=servers.findByIdAndUserId(serverId,userId).orElseThrow(ServerNotFoundException::new); ensurePinned(server); WgInterface wg=interfaces.findById(peer.getInterfaceId()).orElseThrow(PeerNotFoundException::new);
+        ssh.runSudoScript(server.getHost(),server.getSshPort(),server.getSshUser(),serverService.credentials(userId,serverId),server.getHostKeyFingerprint(),removePeerScript(wg.getName(),peer.getPublicKey())); peer.setEnabled(false);
     }
 
     private Peer ownedPeer(UUID userId,UUID peerId){

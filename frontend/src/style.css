@@ -8,6 +8,8 @@
 .peer-state.checking{color:#fbbf24}
 .panel-actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.import-label{display:grid;gap:7px;color:#aaa99f;font-size:9px;margin-top:15px}.import-label select{background:#101110;border:1px solid #383a34;border-radius:2px;color:#e0dfd6;padding:9px;outline:none}.import-peers{margin-top:16px;border-top:1px solid #30322c;padding-top:11px}.import-peer{display:flex;align-items:center;gap:9px;padding:9px 0;border-bottom:1px solid #282a25;color:#ddd;font-size:10px}.import-peer input{accent-color:#e53935}.import-peer span{min-width:0}.import-peer strong,.import-peer small{display:block}.import-peer small{color:#777a71;font-size:8px;margin-top:4px}
 .import-key{display:block!important;margin-top:7px;width:100%;background:#101110;border:1px solid #383a34;border-radius:2px;color:#e0dfd6;padding:7px}
+.limit-field{min-width:135px!important}.limit-note{color:#fbbf24!important;font-size:7px!important}
+.peer-form-actions{display:flex;align-items:center;gap:7px;margin-left:auto}.limits-active{border-color:#fbbf24;color:#fbbf24}.limits-dialog{width:min(100%,460px)}
 .confirm-dialog{width:min(100%,430px);border-color:#63343b}.confirm-icon{width:32px;height:32px;display:grid;place-items:center;border:1px solid #e53935;border-radius:50%;color:#ff9fac;font-size:16px;margin-bottom:16px}.confirm-dialog h2{margin-bottom:8px}.solid-danger{background:#9f2630!important;border-color:#d94a55!important;color:#fff!important}.solid-danger:hover:not(:disabled){background:#d94a55!important;border-color:#ff7b83!important}.confirm-overlay{background:rgba(5,5,5,.78)}
 .peer-state.unavailable{color:#fb7185}
 .brand-glyph{overflow:hidden;padding:0;background:#76000b}

@@ -4,7 +4,7 @@ import { Area,AreaChart,CartesianGrid,Line,LineChart,ResponsiveContainer,Tooltip
 import wireguardLogo from './assets/wireguard-dragon.jpeg'
 
 type Server={id:string;name:string;host:string;sshPort:number;sshUser:string;operatingSystem:string|null;status:'PENDING'|'ONLINE'|'ERROR';connectionError:string|null}
-type Peer={id:string;name:string;publicKey:string;allowedIp:string;enabled:boolean;createdAt:string}
+type Peer={id:string;name:string;publicKey:string;allowedIp:string;enabled:boolean;createdAt:string;trafficLimitBytes:number|null;expiresAt:string|null}
 type ServerMetric={timestamp:string;cpu:number;ram:number;disk:number;netRx:number;netTx:number}
 type PeerMetric={timestamp:string;rxBytes:number;txBytes:number;lastHandshake:string|null;online:boolean}
 type PeerCreated={peer:Peer;config:string;qrCodePngBase64:string}
@@ -24,6 +24,7 @@ async function api<T>(path:string,token:string,init:RequestInit={}):Promise<T>{
 function bytes(n:number){if(n<1024)return `${n} B`;const units=['KB','MB','GB','TB'];let v=n/1024,i=0;while(v>=1024&&i<units.length-1){v/=1024;i++}return `${v.toFixed(1)} ${units[i]}`}
 function time(value:string){return new Date(value).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}
 function dateTime(value:string|null){return value?new Date(value).toLocaleString(): '—'}
+function peerLimits(peer:Peer){const parts=[];if(peer.trafficLimitBytes)parts.push(`≤ ${bytes(peer.trafficLimitBytes)}`);if(peer.expiresAt)parts.push(`until ${new Date(peer.expiresAt).toLocaleString()}`);return parts.join(' · ')}
 
 export default function App(){
   const [token,setToken]=useState(()=>localStorage.getItem(TOKEN)??'')
@@ -166,9 +167,14 @@ function ServerDialog({token,server,onClose,onSaved}:{token:string;server?:Serve
 }
 
 function PeerForm({token,serverId,onCreated}:{token:string;serverId:string;onCreated:(peer:PeerCreated)=>void}){
-  const [name,setName]=useState('');const [error,setError]=useState('')
-  const mutation=useMutation({mutationFn:()=>api<PeerCreated>(`/api/servers/${serverId}/peers`,token,{method:'POST',body:JSON.stringify({name})}),onSuccess:onCreated,onError:e=>setError(e.message)})
-  return <form className="peer-form" onSubmit={e=>{e.preventDefault();setError('');mutation.mutate()}}><label>Device name<input autoFocus required maxLength={100} value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Laptop"/></label>{error&&<div className="form-error">{error}</div>}<button className="button primary" disabled={mutation.isPending||!name.trim()}>{mutation.isPending?<><span className="spinner"/> Provisioning peer…</>:'Create one-time config'}</button></form>
+  const [name,setName]=useState('');const [trafficGb,setTrafficGb]=useState('');const [durationDays,setDurationDays]=useState('');const [showLimits,setShowLimits]=useState(false);const [error,setError]=useState('')
+  const mutation=useMutation({mutationFn:()=>api<PeerCreated>(`/api/servers/${serverId}/peers`,token,{method:'POST',body:JSON.stringify({name,trafficLimitBytes:trafficGb?Math.round(Number(trafficGb)*1024*1024*1024):null,expiresAt:durationDays?new Date(Date.now()+Number(durationDays)*86400000).toISOString():null})}),onSuccess:onCreated,onError:e=>setError(e.message)})
+  return <><form className="peer-form" onSubmit={e=>{e.preventDefault();setError('');mutation.mutate()}}><label>Device name<input autoFocus required maxLength={100} value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Laptop"/></label><div className="peer-form-actions"><button type="button" className={`button quiet ${trafficGb||durationDays?'limits-active':''}`} onClick={()=>setShowLimits(true)}>＋ {trafficGb||durationDays?'Edit limits':'Add limits'}</button><button className="button primary" disabled={mutation.isPending||!name.trim()}>{mutation.isPending?<><span className="spinner"/> Provisioning peer…</>:'Create one-time config'}</button></div>{error&&<div className="form-error">{error}</div>}</form>{showLimits&&<LimitsDialog trafficGb={trafficGb} durationDays={durationDays} onClose={()=>setShowLimits(false)} onSave={(traffic,days)=>{setTrafficGb(traffic);setDurationDays(days);setShowLimits(false)}}/>}</>
+}
+
+function LimitsDialog({trafficGb,durationDays,onClose,onSave}:{trafficGb:string;durationDays:string;onClose:()=>void;onSave:(traffic:string,days:string)=>void}){
+  const [traffic,setTraffic]=useState(trafficGb);const [days,setDays]=useState(durationDays)
+  return <div className="overlay" onMouseDown={e=>e.target===e.currentTarget&&onClose()}><section className="dialog panel limits-dialog"><button className="close" onClick={onClose}>×</button><div className="eyebrow">PEER / LIMITS</div><h2>Configure peer limits</h2><p className="dialog-copy">Limits are applied automatically by monitoring. Leave a field empty for unlimited usage.</p><div className="form-stack"><label>Traffic limit (GB)<input type="number" min="1" step="1" value={traffic} onChange={e=>setTraffic(e.target.value)} placeholder="Unlimited"/></label><label>Usage limit (days)<input type="number" min="1" step="1" value={days} onChange={e=>setDays(e.target.value)} placeholder="Unlimited"/></label></div><div className="dialog-actions"><button className="button quiet" onClick={onClose}>Cancel</button><button className="button primary" onClick={()=>onSave(traffic,days)}>Apply limits</button></div></section></div>
 }
 
 function ImportDialog({token,serverId,onClose,onImported}:{token:string;serverId:string;onClose:()=>void;onImported:()=>void}){
@@ -196,7 +202,7 @@ function PeerRow({peer,token,selected,onSelect,disabled,onChanged,onEdit,onReque
   const config=useMutation({mutationFn:()=>api<PeerCreated>(`/api/peers/${peer.id}/config`,token),onSuccess:result=>window.dispatchEvent(new CustomEvent('wg-warden-config',{detail:result})),onError:e=>setError(e.message)})
   const state=disabled||!peer.enabled?'OFFLINE':metrics.isError?'UNAVAILABLE':metrics.isLoading?'CHECKING':latest?.online?'ONLINE':'OFFLINE'
   return <>
-    <tr className={selected?'selected':''} onClick={onSelect}><td><strong>{peer.name}</strong><small className="mono">{peer.publicKey.slice(0,16)}…</small></td><td className="mono">{peer.allowedIp}</td><td><span className={`peer-state ${state.toLowerCase()}`}><i/>{state}</span></td><td>{metrics.isError?<span className="error-text">Unavailable</span>:metrics.isLoading?'Loading…':dateTime(latest?.lastHandshake??null)}</td><td className="mono traffic">↓ {bytes(latest?.rxBytes??0)}<br/>↑ {bytes(latest?.txBytes??0)}</td><td className="actions"><button disabled={disabled} onClick={e=>{e.stopPropagation();onEdit()}}>EDIT</button><button disabled={disabled||config.isPending} onClick={e=>{e.stopPropagation();config.mutate()}}>CONF</button><button disabled={disabled||toggle.isPending} title={peer.enabled?'Disable peer':'Enable peer'} onClick={e=>{e.stopPropagation();setError('');toggle.mutate()}}>{peer.enabled?'DISABLE':'ENABLE'}</button><button className="danger" disabled={disabled||remove.isPending} title="Delete peer" onClick={e=>{e.stopPropagation();onRequestDelete(()=>{setError('');remove.mutate()})}}>DELETE</button></td></tr>
+    <tr className={selected?'selected':''} onClick={onSelect}><td><strong>{peer.name}</strong><small className="mono">{peer.publicKey.slice(0,16)}…</small>{peerLimits(peer)&&<small className="limit-note">{peerLimits(peer)}</small>}</td><td className="mono">{peer.allowedIp}</td><td><span className={`peer-state ${state.toLowerCase()}`}><i/>{state}</span></td><td>{metrics.isError?<span className="error-text">Unavailable</span>:metrics.isLoading?'Loading…':dateTime(latest?.lastHandshake??null)}</td><td className="mono traffic">↓ {bytes(latest?.rxBytes??0)}<br/>↑ {bytes(latest?.txBytes??0)}</td><td className="actions"><button disabled={disabled} onClick={e=>{e.stopPropagation();onEdit()}}>EDIT</button><button disabled={disabled||config.isPending} onClick={e=>{e.stopPropagation();config.mutate()}}>CONF</button><button disabled={disabled||toggle.isPending} title={peer.enabled?'Disable peer':'Enable peer'} onClick={e=>{e.stopPropagation();setError('');toggle.mutate()}}>{peer.enabled?'DISABLE':'ENABLE'}</button><button className="danger" disabled={disabled||remove.isPending} title="Delete peer" onClick={e=>{e.stopPropagation();onRequestDelete(()=>{setError('');remove.mutate()})}}>DELETE</button></td></tr>
     {error&&<tr><td colSpan={6} className="row-error">{error}</td></tr>}
   </>
 }

@@ -2,6 +2,7 @@ package com.example.wgwarden.monitoring;
 
 import com.example.wgwarden.peer.Peer;
 import com.example.wgwarden.peer.PeerRepository;
+import com.example.wgwarden.peer.PeerService;
 import com.example.wgwarden.provisioning.WgInterface;
 import com.example.wgwarden.provisioning.WgInterfaceRepository;
 import com.example.wgwarden.server.Server;
@@ -45,13 +46,14 @@ public class MonitoringService {
     private final MonitoringEventHub events;
     private final TransactionTemplate transactions;
     private final java.time.Duration retention;
+    private final PeerService peerService;
 
     public MonitoringService(ServerRepository servers,WgInterfaceRepository interfaces,PeerRepository peers,
             ServerMetricRepository serverMetrics,PeerMetricRepository peerMetrics,SshClientService ssh,
             ServerService serverService,MonitoringEventHub events,org.springframework.transaction.PlatformTransactionManager txManager,
-            @Value("${app.monitoring.retention:30d}") java.time.Duration retention){
+            @Value("${app.monitoring.retention:30d}") java.time.Duration retention,PeerService peerService){
         this.servers=servers;this.interfaces=interfaces;this.peers=peers;this.serverMetrics=serverMetrics;this.peerMetrics=peerMetrics;
-        this.ssh=ssh;this.serverService=serverService;this.events=events;this.transactions=new TransactionTemplate(txManager);this.retention=retention;
+        this.ssh=ssh;this.serverService=serverService;this.events=events;this.transactions=new TransactionTemplate(txManager);this.retention=retention;this.peerService=peerService;
     }
 
     @Scheduled(cron="0 20 3 * * *")
@@ -99,6 +101,8 @@ public class MonitoringService {
             String[] values=peerDump.getOrDefault(wg.getName(),Map.of()).get(peer.getPublicKey());if(values==null)continue;
             long epoch=counter(values[0]);Instant handshake=epoch==0?null:Instant.ofEpochSecond(epoch);
             PeerMetric metric=peerMetrics.save(new PeerMetric(peer.getId(),now,counter(values[1]),counter(values[2]),handshake));
+            boolean expired=peer.getExpiresAt()!=null&&!peer.getExpiresAt().isAfter(now); boolean overTraffic=peer.getTrafficLimitBytes()!=null&&counter(values[1])+counter(values[2])>=peer.getTrafficLimitBytes();
+            if(expired||overTraffic)try{peerService.disableForLimit(server.getUserId(),peer);}catch(RuntimeException e){log.warn("Could not disable limited peer {}",peer.getId(),e);}
             peerUpdates.add(new MonitorUpdate.PeerUpdate(peer.getId(),PeerMetricResponse.from(metric)));
         }
         server.markOnline();events.publish(server.getUserId(),new MonitorUpdate(serverId,server.getStatus().name(),null,ServerMetricResponse.from(serverMetric),peerUpdates));

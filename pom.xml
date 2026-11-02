@@ -12,9 +12,9 @@
   </parent>
 
   <groupId>com.example</groupId>
-  <artifactId>wg-manager</artifactId>
+  <artifactId>wg-warden</artifactId>
   <version>0.0.1-SNAPSHOT</version>
-  <name>wg-manager</name>
+  <name>wg-warden</name>
 
   <properties>
     <java.version>21</java.version>

@@ -5,4 +5,4 @@ app:
 
 logging:
   level:
-    com.example.wgmanager: DEBUG
+    com.example.wgwarden: DEBUG

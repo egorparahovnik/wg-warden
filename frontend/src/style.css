@@ -7,6 +7,9 @@
 .form-stack textarea{-webkit-text-security:disc}
 .peer-state.checking{color:#fbbf24}
 .peer-state.unavailable{color:#fb7185}
+.brand-glyph{overflow:hidden;padding:0;background:#76000b}
+.wireguard-logo{display:block;width:100%;height:100%;object-fit:cover}
+.auth-wrap{background:#101112}
 
 /* UI scale, red WireGuard accent, and responsive server dialog */
 :root{font-size:14px;--accent:#e53935;--accent-hover:#ff6659}

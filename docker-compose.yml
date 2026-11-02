@@ -1,20 +1,62 @@
+name: wg-warden
+
 services:
   db:
     image: postgres:16-alpine
-    container_name: wgmanager-db
+    container_name: wg-warden-db
     environment:
       POSTGRES_DB: wgmanager
-      POSTGRES_USER: wgmanager
-      POSTGRES_PASSWORD: wgmanager
+      POSTGRES_USER: ${DB_USER:-wgmanager}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-wgmanager}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U wgmanager"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-wgmanager}"]
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wg-warden-app
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/wgmanager
+      DB_USER: ${DB_USER:-wgmanager}
+      DB_PASSWORD: ${DB_PASSWORD:-wgmanager}
+      APP_MASTER_KEY: ${APP_MASTER_KEY:?APP_MASTER_KEY is required}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      MONITORING_INTERVAL: ${MONITORING_INTERVAL:-60s}
+      SERVER_PORT: 8081
+    expose:
+      - "8081"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8081/actuator/health | grep -q 'UP'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: wg-warden-web
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   pgdata:
+    name: ${PGDATA_VOLUME:-wg-warden_pgdata}

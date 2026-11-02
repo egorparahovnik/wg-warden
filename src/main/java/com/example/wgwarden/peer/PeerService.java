@@ -8,6 +8,7 @@ import com.example.wgwarden.server.ServerRepository;
 import com.example.wgwarden.server.ServerService;
 import com.example.wgwarden.ssh.SshClientService;
 import org.bouncycastle.crypto.params.X25519PrivateKeyParameters;
+import com.example.wgwarden.crypto.CryptoService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.google.zxing.BarcodeFormat;
@@ -22,14 +23,13 @@ import java.util.*;
 public class PeerService {
     private static final String APP_INTERFACE="wg-warden0";
     private final PeerRepository peers; private final WgInterfaceRepository interfaces; private final ServerRepository servers;
-    private final SshClientService ssh; private final ServerService serverService; private final SecureRandom random=new SecureRandom();
-    public PeerService(PeerRepository peers,WgInterfaceRepository interfaces,ServerRepository servers,SshClientService ssh,ServerService serverService){this.peers=peers;this.interfaces=interfaces;this.servers=servers;this.ssh=ssh;this.serverService=serverService;}
+    private final SshClientService ssh; private final ServerService serverService; private final CryptoService crypto; private final SecureRandom random=new SecureRandom();
+    public PeerService(PeerRepository peers,WgInterfaceRepository interfaces,ServerRepository servers,SshClientService ssh,ServerService serverService,CryptoService crypto){this.peers=peers;this.interfaces=interfaces;this.servers=servers;this.ssh=ssh;this.serverService=serverService;this.crypto=crypto;}
 
     @Transactional(readOnly=true)
     public List<PeerResponse> list(UUID userId,UUID serverId){
         Server server=servers.findByIdAndUserId(serverId,userId).orElseThrow(ServerNotFoundException::new);
-        WgInterface wg=interfaces.findByServerIdAndName(server.getId(),APP_INTERFACE).orElse(null);
-        return wg==null?List.of():peers.findAllByInterfaceIdOrderByCreatedAtDesc(wg.getId()).stream().map(PeerResponse::from).toList();
+        return interfaces.findAllByServerIdOrderByName(server.getId()).stream().flatMap(wg->peers.findAllByInterfaceIdOrderByCreatedAtDesc(wg.getId()).stream()).map(PeerResponse::from).toList();
     }
 
     @Transactional
@@ -41,10 +41,27 @@ public class PeerService {
         String ip=nextAddress(locked);
         KeyPair pair=generateKeyPair();
         String name=request.name().trim();
-        ssh.runSudoScript(server.getHost(),server.getSshPort(),server.getSshUser(),serverService.credentials(userId,serverId),server.getHostKeyFingerprint(),addPeerScript(pair.publicKey(),ip));
-        Peer peer=peers.save(new Peer(locked.getId(),name,pair.publicKey(),ip+"/32"));
+        ssh.runSudoScript(server.getHost(),server.getSshPort(),server.getSshUser(),serverService.credentials(userId,serverId),server.getHostKeyFingerprint(),addPeerScript(locked.getName(),pair.publicKey(),ip));
+        Peer peer=new Peer(locked.getId(),name,pair.publicKey(),ip+"/32"); peer.setEncryptedPrivateKey(crypto.encrypt(pair.privateKey().getBytes(java.nio.charset.StandardCharsets.UTF_8))); peer=peers.save(peer);
         String config=clientConfig(server,locked,ip,pair.privateKey());
         return new PeerCreationResponse(PeerResponse.from(peer),config,qr(config));
+    }
+
+    @Transactional
+    public PeerResponse update(UUID userId,UUID peerId,PeerUpdateRequest request){
+        Peer peer=ownedPeer(userId,peerId);
+        if(request.name()!=null){String name=request.name().trim();if(name.isBlank())throw new IllegalArgumentException("peer name cannot be blank");peer.setName(name);}
+        if(request.privateKey()!=null&&!request.privateKey().isBlank())peer.setEncryptedPrivateKey(crypto.encrypt(request.privateKey().trim().getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        if(request.enabled()!=null&&peer.isEnabled()!=request.enabled())setEnabled(userId,peerId,request.enabled());
+        return PeerResponse.from(peer);
+    }
+
+    @Transactional(readOnly=true)
+    public PeerCreationResponse config(UUID userId,UUID peerId){
+        Peer peer=ownedPeer(userId,peerId);if(peer.getEncryptedPrivateKey()==null)throw new IllegalStateException("client private key is not available; edit the imported peer and provide its private key");
+        WgInterface wg=interfaces.findById(peer.getInterfaceId()).orElseThrow(PeerNotFoundException::new);Server server=servers.findByIdAndUserId(wg.getServerId(),userId).orElseThrow(ServerNotFoundException::new);
+        String text=clientConfig(server,wg,address(peer.getAllowedIp()),new String(crypto.decrypt(peer.getEncryptedPrivateKey()),java.nio.charset.StandardCharsets.UTF_8));
+        return new PeerCreationResponse(PeerResponse.from(peer),text,qr(text));
     }
 
     @Transactional
@@ -54,7 +71,8 @@ public class PeerService {
         if(peer.isEnabled()!=enabled){
             Server server=servers.findByIdAndUserId(serverIdFor(userId,peer),userId).orElseThrow(ServerNotFoundException::new);
             ensurePinned(server);
-            ssh.runSudoScript(server.getHost(),server.getSshPort(),server.getSshUser(),serverService.credentials(userId,server.getId()),server.getHostKeyFingerprint(),enabled?addPeerScript(peer.getPublicKey(),address(peer.getAllowedIp())):removePeerScript(peer.getPublicKey()));
+            WgInterface wg=interfaces.findById(peer.getInterfaceId()).orElseThrow(PeerNotFoundException::new);
+            ssh.runSudoScript(server.getHost(),server.getSshPort(),server.getSshUser(),serverService.credentials(userId,server.getId()),server.getHostKeyFingerprint(),enabled?addPeerScript(wg.getName(),peer.getPublicKey(),address(peer.getAllowedIp())):removePeerScript(wg.getName(),peer.getPublicKey()));
             peer.setEnabled(enabled);
         }
         return PeerResponse.from(peer);
@@ -66,7 +84,8 @@ public class PeerService {
         interfaces.lockByIdAndServerId(peer.getInterfaceId(),serverId).orElseThrow(PeerNotFoundException::new);
         Server server=servers.findByIdAndUserId(serverId,userId).orElseThrow(ServerNotFoundException::new);
         ensurePinned(server);
-        ssh.runSudoScript(server.getHost(),server.getSshPort(),server.getSshUser(),serverService.credentials(userId,serverId),server.getHostKeyFingerprint(),removePeerScript(peer.getPublicKey()));
+        WgInterface wg=interfaces.findById(peer.getInterfaceId()).orElseThrow(PeerNotFoundException::new);
+        ssh.runSudoScript(server.getHost(),server.getSshPort(),server.getSshUser(),serverService.credentials(userId,serverId),server.getHostKeyFingerprint(),removePeerScript(wg.getName(),peer.getPublicKey()));
         peers.delete(peer);
     }
 
@@ -112,15 +131,15 @@ public class PeerService {
             return Base64.getEncoder().encodeToString(out.toByteArray());
         }catch(Exception e){throw new IllegalStateException("could not create peer QR code",e);}
     }
-    private String addPeerScript(String publicKey,String ip){
-        return "set -euo pipefail\nexec 9>/run/lock/wg-warden-wg-warden0.lock\nflock -x 9\nconf=/etc/wireguard/wg-warden0.conf\n"+
+    private String addPeerScript(String interfaceName,String publicKey,String ip){
+        return "set -euo pipefail\nexec 9>/run/lock/wg-warden-"+interfaceName+".lock\nflock -x 9\nconf=/etc/wireguard/"+interfaceName+".conf\n"+
                 "grep -qF 'PublicKey = "+publicKey+"' \"$conf\" || cat >> \"$conf\" <<'WG_PEER'\n[Peer]\nPublicKey = "+publicKey+"\nAllowedIPs = "+ip+"/32\nWG_PEER\n"+
-                "wg syncconf wg-warden0 <(wg-quick strip wg-warden0)\n";
+                "wg syncconf "+interfaceName+" <(wg-quick strip "+interfaceName+")\n";
     }
-    private String removePeerScript(String publicKey){
-        return "set -euo pipefail\nexec 9>/run/lock/wg-warden-wg-warden0.lock\nflock -x 9\nconf=/etc/wireguard/wg-warden0.conf\ntmp=$(mktemp)\n"+
+    private String removePeerScript(String interfaceName,String publicKey){
+        return "set -euo pipefail\nexec 9>/run/lock/wg-warden-"+interfaceName+".lock\nflock -x 9\nconf=/etc/wireguard/"+interfaceName+".conf\ntmp=$(mktemp)\n"+
                 "awk -v key='"+publicKey+"' 'function flush(){if(!drop)for(i=1;i<=n;i++)print lines[i];delete lines;n=0;drop=0} " +
                 "/^\\[Peer\\][[:space:]]*$/ {flush();peer=1;lines[++n]=$0;next} peer {lines[++n]=$0;if($1==\"PublicKey\"&&$2==\"=\"&&$3==key)drop=1;next} {print} END{flush()}' \"$conf\" > \"$tmp\"\n"+
-                "install -m 600 \"$tmp\" \"$conf\"; rm -f \"$tmp\"\nwg syncconf wg-warden0 <(wg-quick strip wg-warden0)\n";
+                "install -m 600 \"$tmp\" \"$conf\"; rm -f \"$tmp\"\nwg syncconf "+interfaceName+" <(wg-quick strip "+interfaceName+")\n";
     }
 }

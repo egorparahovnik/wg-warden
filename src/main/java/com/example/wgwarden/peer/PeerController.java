@@ -20,7 +20,10 @@ public class PeerController {
     public PeerCreationResponse create(Authentication authentication,@PathVariable UUID serverId,@Valid @RequestBody PeerRequest request){return service.create(user(authentication),serverId,request);}
 
     @PatchMapping("/api/peers/{peerId}")
-    public PeerResponse setEnabled(Authentication authentication,@PathVariable UUID peerId,@Valid @RequestBody PeerEnabledRequest request){return service.setEnabled(user(authentication),peerId,request.enabled());}
+    public PeerResponse update(Authentication authentication,@PathVariable UUID peerId,@Valid @RequestBody PeerUpdateRequest request){return service.update(user(authentication),peerId,request);}
+
+    @GetMapping("/api/peers/{peerId}/config")
+    public PeerCreationResponse config(Authentication authentication,@PathVariable UUID peerId){return service.config(user(authentication),peerId);}
 
     @DeleteMapping("/api/peers/{peerId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)

@@ -10,14 +10,45 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
+import java.util.*;
+import com.example.wgwarden.peer.Peer;
+import com.example.wgwarden.peer.PeerRepository;
 
 @Service
 public class ProvisioningService {
     private static final String INTERFACE="wg-warden0";
     private static final int PORT=51821;
     private static final String SUBNET="10.67.0.0/24";
-    private final ServerRepository servers; private final WgInterfaceRepository interfaces; private final SshClientService ssh; private final CryptoService crypto; private final com.example.wgwarden.server.ServerService serverService;
-    public ProvisioningService(ServerRepository servers,WgInterfaceRepository interfaces,SshClientService ssh,CryptoService crypto,com.example.wgwarden.server.ServerService serverService){this.servers=servers;this.interfaces=interfaces;this.ssh=ssh;this.crypto=crypto;this.serverService=serverService;}
+    private final ServerRepository servers; private final WgInterfaceRepository interfaces; private final PeerRepository peers; private final SshClientService ssh; private final CryptoService crypto; private final com.example.wgwarden.server.ServerService serverService;
+    public ProvisioningService(ServerRepository servers,WgInterfaceRepository interfaces,PeerRepository peers,SshClientService ssh,CryptoService crypto,com.example.wgwarden.server.ServerService serverService){this.servers=servers;this.interfaces=interfaces;this.peers=peers;this.ssh=ssh;this.crypto=crypto;this.serverService=serverService;}
+
+    public List<DiscoveredInterface> discover(UUID userId, UUID serverId) {
+        Server server=servers.findByIdAndUserId(serverId,userId).orElseThrow(ServerNotFoundException::new); ensurePinned(server);
+        String output=ssh.runSudoScript(server.getHost(),server.getSshPort(),server.getSshUser(),serverService.credentials(userId,serverId),server.getHostKeyFingerprint(),discoveryScript());
+        Map<String,List<DiscoveredPeer>> found=new LinkedHashMap<>(); Map<String,String[]> metadata=new LinkedHashMap<>();
+        for(String line:output.lines().toList()){String[] p=line.split("\\t",-1);if(p.length>=2&&p[0].equals("IF"))metadata.put(p[1],p);else if(p.length>=5&&p[0].equals("PEER"))found.computeIfAbsent(p[1],k->new ArrayList<>()).add(new DiscoveredPeer(p[4],p[2],p[3]));}
+        return metadata.values().stream().map(p->new DiscoveredInterface(p[1],parseInt(p[2]),p[3],p[4],found.getOrDefault(p[1],List.of()))).toList();
+    }
+
+    @Transactional
+    public List<DiscoveredInterface> importExisting(UUID userId,UUID serverId,ImportRequest request){
+        if(request==null||request.interfaceName()==null||!request.interfaceName().matches("[A-Za-z0-9_.-]{1,15}"))throw new IllegalArgumentException("invalid WireGuard interface name");
+        Server server=servers.findByIdAndUserId(serverId,userId).orElseThrow(ServerNotFoundException::new);ensurePinned(server);
+        DiscoveredInterface remote=discover(userId,serverId).stream().filter(i->i.name().equals(request.interfaceName())).findFirst().orElseThrow(()->new IllegalArgumentException("interface was not found on the server"));
+        String privateKey=ssh.runSudoScript(server.getHost(),server.getSshPort(),server.getSshUser(),serverService.credentials(userId,serverId),server.getHostKeyFingerprint(),"wg show "+remote.name()+" private-key").trim();
+        if(privateKey.isBlank()||privateKey.contains(" "))throw new IllegalStateException("could not read the interface private key");
+        WgInterface local=interfaces.findByServerIdAndName(serverId,remote.name()).orElseGet(()->interfaces.save(new WgInterface(serverId,remote.name(),remote.listenPort(),remote.subnet(),remote.publicKey(),crypto.encrypt(privateKey.getBytes(StandardCharsets.UTF_8)))));
+        Set<String> selected=request.peerPublicKeys()==null?Set.of():new HashSet<>(request.peerPublicKeys());
+        for(DiscoveredPeer p:remote.peers())if(selected.contains(p.publicKey())&&p.allowedIp()!=null&&!p.allowedIp().contains(",")&&peers.findByInterfaceIdAndPublicKey(local.getId(),p.publicKey()).isEmpty()){
+            Peer peer=new Peer(local.getId(),p.name(),p.publicKey(),p.allowedIp()); String clientKey=request.peerPrivateKeys()==null?null:request.peerPrivateKeys().get(p.publicKey());
+            if(clientKey!=null&&!clientKey.isBlank())peer.setEncryptedPrivateKey(crypto.encrypt(clientKey.trim().getBytes(StandardCharsets.UTF_8))); peers.save(peer);
+        }
+        return discover(userId,serverId);
+    }
+
+    private void ensurePinned(Server server){if(server.getHostKeyFingerprint()==null)throw new IllegalStateException("server host key is not pinned; reconnect and verify the server first");}
+    private int parseInt(String value){try{return Integer.parseInt(value);}catch(NumberFormatException e){return 0;}}
+    private String discoveryScript(){return "set -euo pipefail\nfor i in $(wg show interfaces 2>/dev/null); do port=$(wg show $i listen-port); pub=$(wg show $i public-key); subnet=$(ip -o -4 addr show dev $i | awk 'NR==1{print $4}'); printf 'IF\\t%s\\t%s\\t%s\\t%s\\n' \"$i\" \"$port\" \"${subnet:-0.0.0.0/0}\" \"$pub\"; wg show $i dump | tail -n +2 | awk -v iface=\"$i\" 'NF>=4 {split($4,a,\",\"); printf \"PEER\\t%s\\t%s\\t%s\\tpeer-%s\\n\",iface,$1,a[1],substr($1,1,8)}'; done";}
 
     public ProvisioningResponse provision(UUID userId,UUID serverId){
         Server server=servers.findByIdAndUserId(serverId,userId).orElseThrow(ServerNotFoundException::new);

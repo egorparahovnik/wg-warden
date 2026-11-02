@@ -7,6 +7,7 @@ import jakarta.persistence.LockModeType;
 import java.util.*;
 public interface WgInterfaceRepository extends JpaRepository<WgInterface,UUID>{
  Optional<WgInterface> findByServerIdAndName(UUID serverId,String name);
+ List<WgInterface> findAllByServerIdOrderByName(UUID serverId);
  Optional<WgInterface> findByIdAndServerId(UUID id,UUID serverId);
  @Lock(LockModeType.PESSIMISTIC_WRITE)
  @Query("select w from WgInterface w where w.id=:id and w.serverId=:serverId")

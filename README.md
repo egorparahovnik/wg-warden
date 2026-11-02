@@ -116,7 +116,7 @@ git pull
 
 Сохраните `.env` и резервную копию базы в надёжном месте. Не генерируйте новый `APP_MASTER_KEY` после сохранения секретов: они не расшифруются другим ключом. Файл `.env` исключён из Git.
 
-База хранится в именованном Docker volume. Установщик распознаёт имя volume прежней версии проекта и подключает его при обновлении, чтобы не переключить приложение на пустую базу. Внутренние имя базы и пользователя PostgreSQL оставлены `wgmanager` для совместимости с уже сохранёнными данными.
+База хранится в именованном Docker volume. Установщик распознаёт имя volume прежней версии проекта и подключает его при обновлении, чтобы не переключить приложение на пустую базу. Имя базы и пользователя PostgreSQL — `wgwarden`.
 
 ### Резервное копирование и восстановление
 
@@ -124,13 +124,13 @@ git pull
 
 ```bash
 mkdir -p backups
-docker compose exec -T db pg_dump -U wgmanager -d wgmanager > "backups/wg-warden-$(date +%F).sql"
+docker compose exec -T db pg_dump -U wgwarden -d wgwarden > "backups/wg-warden-$(date +%F).sql"
 ```
 
 Восстановите копию в запущенную базу:
 
 ```bash
-docker compose exec -T db psql -U wgmanager -d wgmanager < backups/имя-файла.sql
+docker compose exec -T db psql -U wgwarden -d wgwarden < backups/имя-файла.sql
 ```
 
 Копируйте также `.env`. Резервная копия базы без соответствующего `APP_MASTER_KEY` не позволит расшифровать сохранённые секреты.

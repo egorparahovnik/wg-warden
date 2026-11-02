@@ -15,6 +15,7 @@ public class Peer {
     @Column(nullable=false) private boolean enabled=true;
     @Column(name="expires_at") private Instant expiresAt;
     @Column(name="created_at",nullable=false,updatable=false) private Instant createdAt;
+    @Column(name="encrypted_private_key") private byte[] encryptedPrivateKey;
     protected Peer(){}
     public Peer(UUID interfaceId,String name,String publicKey,String allowedIp){this.interfaceId=interfaceId;this.name=name;this.publicKey=publicKey;this.allowedIp=allowedIp;}
     @PrePersist void created(){if(createdAt==null)createdAt=Instant.now();}
@@ -22,4 +23,7 @@ public class Peer {
     public String getPublicKey(){return publicKey;} public String getAllowedIp(){return allowedIp;} public boolean isEnabled(){return enabled;}
     public Instant getExpiresAt(){return expiresAt;} public Instant getCreatedAt(){return createdAt;}
     public void setEnabled(boolean enabled){this.enabled=enabled;}
+    public byte[] getEncryptedPrivateKey(){return encryptedPrivateKey;}
+    public void setEncryptedPrivateKey(byte[] value){this.encryptedPrivateKey=value;}
+    public void setName(String name){this.name=name;}
 }

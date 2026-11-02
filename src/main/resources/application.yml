@@ -2,8 +2,8 @@ spring:
   application:
     name: wg-warden
   datasource:
-    url: ${DB_URL:jdbc:postgresql://localhost:5432/wgmanager}
-    username: ${DB_USER:wgmanager}
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/wgwarden}
+    username: ${DB_USER:wgwarden}
     password: ${DB_PASSWORD:?DB_PASSWORD is required}
   jpa:
     open-in-view: false

@@ -30,7 +30,9 @@ public class MonitoringService {
         disk=$(df -P / | awk 'NR==2 {gsub(/%/,"",$5); print $5}')
         read -r net_rx net_tx < <(awk -F: 'NR>2 {gsub(/ /,"",$1); if($1!="lo" && $1 !~ /^wg/){rx+=$2; tx+=$10}} END {printf "%s %s\\n",rx+0,tx+0}' /proc/net/dev)
         printf 'SYS\\t%s\\t%s\\t%s\\t%s\\t%s\\n' "$cpu" "$ram" "$disk" "$net_rx" "$net_tx"
-        (wg show wg-warden0 dump 2>/dev/null || true) | awk 'NF>=8 {printf "WG\\t%s\\t%s\\t%s\\t%s\\t%s\\n", "wg-warden0",$1,$5,$6,$7}'
+        for iface in $(wg show interfaces 2>/dev/null); do
+          (wg show "$iface" dump 2>/dev/null || true) | awk -v iface="$iface" 'NF>=8 {printf "WG\\t%s\\t%s\\t%s\\t%s\\t%s\\n",iface,$1,$5,$6,$7}'
+        done
         """;
 
     private final ServerRepository servers;
@@ -80,23 +82,21 @@ public class MonitoringService {
     private void collectOne(UUID serverId){
         Server server=servers.findById(serverId).orElse(null);
         if(server==null||server.getHostKeyFingerprint()==null)return;
-        WgInterface wg=interfaces.findByServerIdAndName(serverId,APP_INTERFACE).orElse(null);
-        if(wg==null)return;
         String output=ssh.runSudoScript(server.getHost(),server.getSshPort(),server.getSshUser(),
                 serverService.credentials(server.getUserId(),serverId),server.getHostKeyFingerprint(),COLLECT_SCRIPT);
-        Instant now=Instant.now();ServerMetric serverMetric=null;Map<String,String[]> peerDump=new HashMap<>();
+        Instant now=Instant.now();ServerMetric serverMetric=null;Map<String,Map<String,String[]>> peerDump=new HashMap<>();
         for(String line:output.lines().toList()){
             String[] fields=line.split("\\t");
             if(fields.length==6&&fields[0].equals("SYS")){
                 serverMetric=new ServerMetric(serverId,now,metric(fields[1]),metric(fields[2]),metric(fields[3]),counter(fields[4]),counter(fields[5]));
-            }else if(fields.length==6&&fields[0].equals("WG")&&fields[1].equals(wg.getName())){
-                peerDump.put(fields[2],new String[]{fields[3],fields[4],fields[5]});
+            }else if(fields.length==6&&fields[0].equals("WG")){
+                peerDump.computeIfAbsent(fields[1],key->new HashMap<>()).put(fields[2],new String[]{fields[3],fields[4],fields[5]});
             }
         }
         if(serverMetric==null)throw new IllegalStateException("remote metrics response is incomplete");
         serverMetrics.save(serverMetric);List<MonitorUpdate.PeerUpdate> peerUpdates=new ArrayList<>();
-        for(Peer peer:peers.findAllByInterfaceIdOrderByCreatedAtDesc(wg.getId())){
-            String[] values=peerDump.get(peer.getPublicKey());if(values==null)continue;
+        for(WgInterface wg:interfaces.findAllByServerIdOrderByName(serverId)) for(Peer peer:peers.findAllByInterfaceIdOrderByCreatedAtDesc(wg.getId())){
+            String[] values=peerDump.getOrDefault(wg.getName(),Map.of()).get(peer.getPublicKey());if(values==null)continue;
             long epoch=counter(values[0]);Instant handshake=epoch==0?null:Instant.ofEpochSecond(epoch);
             PeerMetric metric=peerMetrics.save(new PeerMetric(peer.getId(),now,counter(values[1]),counter(values[2]),handshake));
             peerUpdates.add(new MonitorUpdate.PeerUpdate(peer.getId(),PeerMetricResponse.from(metric)));

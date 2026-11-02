@@ -4,4 +4,5 @@ import java.util.*;
 public interface PeerRepository extends JpaRepository<Peer,UUID>{
     List<Peer> findAllByInterfaceIdOrderByCreatedAtDesc(UUID interfaceId);
     boolean existsByInterfaceIdAndAllowedIp(UUID interfaceId,String allowedIp);
+    Optional<Peer> findByInterfaceIdAndPublicKey(UUID interfaceId,String publicKey);
 }

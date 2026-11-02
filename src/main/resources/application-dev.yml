@@ -1,7 +1,7 @@
 # ТОЛЬКО для локальной разработки. Не использовать в проде!
 app:
-  master-key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-  jwt-secret: dev-only-jwt-secret-dev-only-jwt-secret-dev-only-jwt-secret
+  master-key: ${APP_MASTER_KEY:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
+  jwt-secret: ${JWT_SECRET:dev-only-jwt-secret-dev-only-jwt-secret-dev-only-jwt-secret}
 
 logging:
   level:

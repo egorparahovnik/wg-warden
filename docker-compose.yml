@@ -27,7 +27,7 @@ services:
     environment:
       DB_URL: jdbc:postgresql://db:5432/wgmanager
       DB_USER: ${DB_USER:-wgmanager}
-      DB_PASSWORD: ${DB_PASSWORD:-wgmanager}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
       APP_MASTER_KEY: ${APP_MASTER_KEY:?APP_MASTER_KEY is required}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       MONITORING_INTERVAL: ${MONITORING_INTERVAL:-60s}
@@ -51,7 +51,7 @@ services:
       dockerfile: Dockerfile
     container_name: wg-warden-web
     ports:
-      - "${WEB_PORT:-8080}:80"
+      - "127.0.0.1:${WEB_PORT:-8080}:80"
     depends_on:
       app:
         condition: service_healthy

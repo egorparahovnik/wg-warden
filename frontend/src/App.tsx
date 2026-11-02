@@ -13,6 +13,7 @@ const TOKEN='wg-warden-token'
 
 async function api<T>(path:string,token:string,init:RequestInit={}):Promise<T>{
   const response=await fetch(path,{...init,headers:{...(init.body?{'Content-Type':'application/json'}:{}),...(token?{Authorization:`Bearer ${token}`}:{}) ,...init.headers}})
+  if(response.status===401){window.dispatchEvent(new Event('wg-warden-auth-expired'));throw new Error('Сессия истекла. Войдите снова.')}
   if(!response.ok){const body=await response.json().catch(()=>({error:response.statusText}));throw new Error(body.error??`HTTP ${response.status}`)}
   if(response.status===204)return undefined as T
   return response.json() as Promise<T>
@@ -33,6 +34,7 @@ export default function App(){
   const [authError,setAuthError]=useState('')
   const [provisionError,setProvisionError]=useState('')
   const qc=useQueryClient()
+  useEffect(()=>{const logout=()=>{localStorage.removeItem(TOKEN);setToken('');qc.clear()};window.addEventListener('wg-warden-auth-expired',logout);return()=>window.removeEventListener('wg-warden-auth-expired',logout)},[qc])
   const serverQuery=useQuery({queryKey:['servers',token],queryFn:()=>api<Server[]>('/api/servers',token),enabled:!!token})
   const servers=serverQuery.data??[]
   const deleteMutation=useMutation({mutationFn:(id:string)=>api<void>(`/api/servers/${id}`,token,{method:'DELETE'}),onSuccess:(_,id)=>{setSelectedId(current=>current===id?'':current);qc.removeQueries({queryKey:['server-metrics',token,id]});void serverQuery.refetch()}})
@@ -54,6 +56,7 @@ export default function App(){
         try{
           setStreamState('connecting')
           const response=await fetch('/api/events',{headers:{Authorization:`Bearer ${token}`},signal:abort.signal})
+          if(response.status===401){window.dispatchEvent(new Event('wg-warden-auth-expired'));break}
           if(!response.ok||!response.body)throw new Error(`SSE HTTP ${response.status}`)
           setStreamState('live')
           const reader=response.body.getReader(),decoder=new TextDecoder();let buffer=''

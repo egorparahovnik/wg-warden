@@ -11,6 +11,8 @@ import com.example.wgwarden.ssh.SshClientService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 import java.time.Instant;
@@ -40,12 +42,20 @@ public class MonitoringService {
     private final ServerService serverService;
     private final MonitoringEventHub events;
     private final TransactionTemplate transactions;
+    private final java.time.Duration retention;
 
     public MonitoringService(ServerRepository servers,WgInterfaceRepository interfaces,PeerRepository peers,
             ServerMetricRepository serverMetrics,PeerMetricRepository peerMetrics,SshClientService ssh,
-            ServerService serverService,MonitoringEventHub events,org.springframework.transaction.PlatformTransactionManager txManager){
+            ServerService serverService,MonitoringEventHub events,org.springframework.transaction.PlatformTransactionManager txManager,
+            @Value("${app.monitoring.retention:30d}") java.time.Duration retention){
         this.servers=servers;this.interfaces=interfaces;this.peers=peers;this.serverMetrics=serverMetrics;this.peerMetrics=peerMetrics;
-        this.ssh=ssh;this.serverService=serverService;this.events=events;this.transactions=new TransactionTemplate(txManager);
+        this.ssh=ssh;this.serverService=serverService;this.events=events;this.transactions=new TransactionTemplate(txManager);this.retention=retention;
+    }
+
+    @Scheduled(cron="0 20 3 * * *")
+    public void purgeOldMetrics(){
+        Instant cutoff=Instant.now().minus(retention);
+        transactions.execute(status->{serverMetrics.deleteByTimestampBefore(cutoff);peerMetrics.deleteByTimestampBefore(cutoff);return null;});
     }
 
     @Scheduled(fixedDelayString="${app.monitoring.interval:60s}",initialDelayString="${app.monitoring.initial-delay:5s}")
@@ -57,12 +67,12 @@ public class MonitoringService {
                 Throwable root=e;while(root.getCause()!=null&&root.getCause()!=root)root=root.getCause();
                 String reason=root.getMessage()==null?root.getClass().getSimpleName():root.getMessage();
                 log.warn("Monitoring failed for server {}: {}",id,reason,e);
-                transactions.execute(status->{servers.findById(id).ifPresent(current->{
+                try { transactions.execute(status->{servers.findById(id).ifPresent(current->{
                     String message=("Monitoring failed: "+reason);
                     if(message.length()>250)message=message.substring(0,247)+"...";
                     current.markError(message);
                     events.publish(current.getUserId(),new MonitorUpdate(id,current.getStatus().name(),message,null,List.of()));
-                });return null;});
+                });return null;}); } catch (RuntimeException markError) { log.warn("Could not persist monitoring error for {}", id, markError); }
             }
         }
     }

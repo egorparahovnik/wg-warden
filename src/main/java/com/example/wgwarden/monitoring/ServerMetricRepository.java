@@ -4,4 +4,5 @@ import java.time.Instant;
 import java.util.*;
 public interface ServerMetricRepository extends JpaRepository<ServerMetric,UUID>{
     List<ServerMetric> findAllByServerIdAndTimestampBetweenOrderByTimestampAsc(UUID serverId,Instant from,Instant to);
+    long deleteByTimestampBefore(Instant before);
 }

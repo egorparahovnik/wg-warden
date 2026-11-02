@@ -5,4 +5,5 @@ import java.util.*;
 public interface PeerMetricRepository extends JpaRepository<PeerMetric,UUID>{
     List<PeerMetric> findAllByPeerIdAndTimestampBetweenOrderByTimestampAsc(UUID peerId,Instant from,Instant to);
     Optional<PeerMetric> findFirstByPeerIdOrderByTimestampDesc(UUID peerId);
+    long deleteByTimestampBefore(Instant before);
 }

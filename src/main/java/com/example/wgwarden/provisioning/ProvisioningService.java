@@ -19,7 +19,6 @@ public class ProvisioningService {
     private final ServerRepository servers; private final WgInterfaceRepository interfaces; private final SshClientService ssh; private final CryptoService crypto; private final com.example.wgwarden.server.ServerService serverService;
     public ProvisioningService(ServerRepository servers,WgInterfaceRepository interfaces,SshClientService ssh,CryptoService crypto,com.example.wgwarden.server.ServerService serverService){this.servers=servers;this.interfaces=interfaces;this.ssh=ssh;this.crypto=crypto;this.serverService=serverService;}
 
-    @Transactional
     public ProvisioningResponse provision(UUID userId,UUID serverId){
         Server server=servers.findByIdAndUserId(serverId,userId).orElseThrow(ServerNotFoundException::new);
         if(server.getHostKeyFingerprint()==null)throw new IllegalStateException("server host key is not pinned; reconnect and verify the server first");
@@ -31,8 +30,12 @@ public class ProvisioningService {
         if(privateKey.isBlank()||publicKey.isBlank())throw new IllegalStateException("remote provisioning returned invalid WireGuard key material");
         WgInterface result=existing==null
                 ? interfaces.save(new WgInterface(serverId,INTERFACE,PORT,SUBNET,publicKey,crypto.encrypt(privateKey.getBytes(StandardCharsets.UTF_8))))
-                : existing;
+                : updateExisting(existing, publicKey, privateKey);
         return ProvisioningResponse.ready(result);
+    }
+    private WgInterface updateExisting(WgInterface existing, String publicKey, String privateKey) {
+        existing.updateKeys(publicKey, crypto.encrypt(privateKey.getBytes(StandardCharsets.UTF_8)));
+        return interfaces.save(existing);
     }
     private String value(String output,String key){return output.lines().filter(l->l.startsWith(key+"=")).map(l->l.substring(key.length()+1).trim()).findFirst().orElse("");}
     private String setupScript(){return """
@@ -44,10 +47,13 @@ public class ProvisioningService {
             fi
             install -d -m 700 /etc/wireguard
             conf=/etc/wireguard/wg-warden0.conf
+            peers_tmp=$(mktemp)
+            trap 'rm -f "$peers_tmp"' EXIT
             if [ -e "$conf" ]; then
               grep -Eq '^# Managed-by: (wg-warden|wg-manager)$' "$conf" || { echo 'wg-warden0 configuration already exists and is not managed by wg-warden' >&2; exit 20; }
               private_key=$(awk -F ' = ' '$1 == "PrivateKey" {print $2; exit}' "$conf")
               [ -n "$private_key" ] || { echo 'managed wg-warden0 configuration has no private key' >&2; exit 21; }
+              awk '/^\\[Peer\\][[:space:]]*$/{found=1} found{print}' "$conf" > "$peers_tmp"
             else
               private_key=$(wg genkey)
             fi
@@ -64,6 +70,7 @@ public class ProvisioningService {
             PostUp = iptables -t nat -C POSTROUTING -s 10.67.0.0/24 -o $egress -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s 10.67.0.0/24 -o $egress -j MASQUERADE
             PostDown = iptables -t nat -D POSTROUTING -s 10.67.0.0/24 -o $egress -j MASQUERADE 2>/dev/null || true
             EOF
+            cat "$peers_tmp" >> "$conf"
             chmod 600 "$conf"
             printf '%s\\n' 'net.ipv4.ip_forward=1' > /etc/sysctl.d/99-wg-warden.conf
             sysctl -p /etc/sysctl.d/99-wg-warden.conf >/dev/null

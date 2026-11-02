@@ -11,7 +11,7 @@ public class Peer {
     @Column(name="interface_id",nullable=false) private UUID interfaceId;
     @Column(nullable=false,length=100) private String name;
     @Column(name="public_key",nullable=false,length=64) private String publicKey;
-    @Column(name="allowed_ip",nullable=false,columnDefinition="inet") private String allowedIp;
+    @Column(name="allowed_ip",nullable=false,length=64) private String allowedIp;
     @Column(nullable=false) private boolean enabled=true;
     @Column(name="expires_at") private Instant expiresAt;
     @Column(name="created_at",nullable=false,updatable=false) private Instant createdAt;

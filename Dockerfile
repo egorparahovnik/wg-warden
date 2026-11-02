@@ -12,6 +12,9 @@ WORKDIR /app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
+RUN useradd --system --uid 10001 --create-home appuser
 COPY --from=build /workspace/target/*.jar app.jar
+RUN chown -R appuser:appuser /app
+USER 10001
 EXPOSE 8081
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]

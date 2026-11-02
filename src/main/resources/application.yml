@@ -4,7 +4,7 @@ spring:
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/wgmanager}
     username: ${DB_USER:wgmanager}
-    password: ${DB_PASSWORD:wgmanager}
+    password: ${DB_PASSWORD:?DB_PASSWORD is required}
   jpa:
     open-in-view: false
     hibernate:
@@ -29,4 +29,5 @@ app:
   jwt-secret: ${JWT_SECRET}
   jwt-expiration: 24h
   monitoring:
+    retention: ${MONITORING_RETENTION:30d}
     interval: ${MONITORING_INTERVAL:60s}

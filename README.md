@@ -75,7 +75,7 @@ Java, Maven, Node.js и PostgreSQL отдельно ставить не нужн
 ### Установка
 
 ```bash
-git clone https://github.com/egorparahovnik/wg-warden.git
+git clone https://github.com/kage-xql/wg-warden.git
 cd wg-warden
 ./install.sh
 ```
@@ -176,7 +176,7 @@ PasswordAuthentication no
 
 ```bash
 ssh wgwarden@<IP>
-git clone https://github.com/egorparahovnik/wg-warden.git
+git clone https://github.com/kage-xql/wg-warden.git
 cd wg-warden
 ./deploy/vps-install.sh
 ```

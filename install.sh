@@ -29,13 +29,28 @@ if [ ! -f .env ]; then
   db_password="$(openssl rand -hex 24)"
   app_master_key="$(openssl rand -base64 32 | tr -d '\n')"
   jwt_secret="$(openssl rand -base64 48 | tr -d '\n')"
+  bootstrap_token="$(openssl rand -hex 24)"
   sed -i.bak "s|^APP_MASTER_KEY=.*|APP_MASTER_KEY=${app_master_key}|" .env
   sed -i.bak "s|^JWT_SECRET=.*|JWT_SECRET=${jwt_secret}|" .env
   sed -i.bak "s|^DB_PASSWORD=.*|DB_PASSWORD=${db_password}|" .env
+  sed -i.bak "s|^APP_BOOTSTRAP_TOKEN=.*|APP_BOOTSTRAP_TOKEN=${bootstrap_token}|" .env
   rm -f .env.bak
   chmod 600 .env
   echo "Создан .env с локальными секретами."
 fi
+
+# Обновление со старой версии: добавляем setup-токен, если его ещё нет.
+if ! grep -q '^APP_BOOTSTRAP_TOKEN=..*' .env; then
+  bootstrap_token="$(openssl rand -hex 24)"
+  if grep -q '^APP_BOOTSTRAP_TOKEN=' .env; then
+    sed -i.bak "s|^APP_BOOTSTRAP_TOKEN=.*|APP_BOOTSTRAP_TOKEN=${bootstrap_token}|" .env
+    rm -f .env.bak
+  else
+    printf '\nAPP_BOOTSTRAP_TOKEN=%s\n' "$bootstrap_token" >> .env
+  fi
+  echo "Добавлен APP_BOOTSTRAP_TOKEN для создания первого аккаунта."
+fi
+bootstrap_token="$(sed -n 's/^APP_BOOTSTRAP_TOKEN=//p' .env | tail -n 1)"
 
 # Keep an existing database volume when moving from the former project name.
 if ! grep -q '^PGDATA_VOLUME=' .env; then
@@ -67,6 +82,9 @@ for attempt in $(seq 1 30); do
   if curl -fsS "http://localhost:${web_port}/actuator/health" >/dev/null 2>&1; then
     echo
     echo "wg-warden запущен: http://localhost:${web_port}"
+    echo
+    echo "Токен для создания первого аккаунта: ${bootstrap_token}"
+    echo "Он также сохранён в .env как APP_BOOTSTRAP_TOKEN."
     echo
     echo "Сервис настроен на запуск вместе с Docker."
     echo "Включить: ./service.sh start"

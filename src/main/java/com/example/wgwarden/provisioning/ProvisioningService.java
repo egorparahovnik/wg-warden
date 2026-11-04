@@ -35,18 +35,24 @@ public class ProvisioningService {
         if(request==null||request.interfaceName()==null||!request.interfaceName().matches("[A-Za-z0-9_.-]{1,15}"))throw new IllegalArgumentException("invalid WireGuard interface name");
         Server server=servers.findByIdAndUserId(serverId,userId).orElseThrow(ServerNotFoundException::new);ensurePinned(server);
         DiscoveredInterface remote=discover(userId,serverId).stream().filter(i->i.name().equals(request.interfaceName())).findFirst().orElseThrow(()->new IllegalArgumentException("interface was not found on the server"));
+        if(!WireGuardValidation.publicKey(remote.publicKey())||!WireGuardValidation.ipv4Cidr(remote.subnet()))
+            throw new IllegalArgumentException("server returned invalid WireGuard interface data");
         String privateKey=ssh.runSudoScript(server.getHost(),server.getSshPort(),server.getSshUser(),serverService.credentials(userId,serverId),server.getHostKeyFingerprint(),"wg show "+remote.name()+" private-key").trim();
         if(privateKey.isBlank()||privateKey.contains(" "))throw new IllegalStateException("could not read the interface private key");
         WgInterface local=interfaces.findByServerIdAndName(serverId,remote.name()).orElseGet(()->interfaces.save(new WgInterface(serverId,remote.name(),remote.listenPort(),remote.subnet(),remote.publicKey(),crypto.encrypt(privateKey.getBytes(StandardCharsets.UTF_8)))));
         Set<String> selected=request.peerPublicKeys()==null?Set.of():new HashSet<>(request.peerPublicKeys());
         for(DiscoveredPeer p:remote.peers())if(selected.contains(p.publicKey())&&p.allowedIp()!=null&&!p.allowedIp().contains(",")&&peers.findByInterfaceIdAndPublicKey(local.getId(),p.publicKey()).isEmpty()){
-            Peer peer=new Peer(local.getId(),p.name(),p.publicKey(),p.allowedIp()); String clientKey=request.peerPrivateKeys()==null?null:request.peerPrivateKeys().get(p.publicKey());
+            // Значения пришли с удалённого сервера: не доверяем им и не пускаем в shell/конфиг без проверки.
+            if(!WireGuardValidation.publicKey(p.publicKey())||!WireGuardValidation.ipv4Cidr(p.allowedIp()))
+                throw new IllegalArgumentException("server returned invalid peer key or address");
+            Peer peer=new Peer(local.getId(),safeName(p.name()),p.publicKey(),p.allowedIp()); String clientKey=request.peerPrivateKeys()==null?null:request.peerPrivateKeys().get(p.publicKey());
             if(clientKey!=null&&!clientKey.isBlank())peer.setEncryptedPrivateKey(crypto.encrypt(clientKey.trim().getBytes(StandardCharsets.UTF_8))); peers.save(peer);
         }
         return discover(userId,serverId);
     }
 
     private void ensurePinned(Server server){if(server.getHostKeyFingerprint()==null)throw new IllegalStateException("server host key is not pinned; reconnect and verify the server first");}
+    private String safeName(String value){String name=value==null?"imported peer":value.replaceAll("[\\p{Cntrl}]","").trim();if(name.isBlank())name="imported peer";return name.length()>100?name.substring(0,100):name;}
     private int parseInt(String value){try{return Integer.parseInt(value);}catch(NumberFormatException e){return 0;}}
     private String discoveryScript(){return "set -euo pipefail\nfor i in $(wg show interfaces 2>/dev/null); do port=$(wg show $i listen-port); pub=$(wg show $i public-key); subnet=$(ip -o -4 addr show dev $i | awk 'NR==1{print $4}'); printf 'IF\\t%s\\t%s\\t%s\\t%s\\n' \"$i\" \"$port\" \"${subnet:-0.0.0.0/0}\" \"$pub\"; wg show $i dump | tail -n +2 | awk -v iface=\"$i\" 'NF>=4 {split($4,a,\",\"); printf \"PEER\\t%s\\t%s\\t%s\\tpeer-%s\\n\",iface,$1,a[1],substr($1,1,8)}'; done";}
 

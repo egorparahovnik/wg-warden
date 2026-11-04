@@ -1,6 +1,7 @@
 package com.example.wgwarden.config;
 
 import com.example.wgwarden.auth.JwtAuthenticationFilter;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpStatus;
@@ -14,7 +15,6 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.argon2.Argon2PasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 @Configuration
@@ -22,8 +22,26 @@ public class SecurityConfig {
     private static final Logger log = LoggerFactory.getLogger(SecurityConfig.class);
 
     @Bean
-    AuthRateLimitFilter authRateLimitFilter() {
-        return new AuthRateLimitFilter();
+    AuthRateLimitFilter authRateLimitFilter(ClientIpResolver clientIp) {
+        return new AuthRateLimitFilter(clientIp);
+    }
+
+    /**
+     * Фильтры уже добавлены в security chain. Отключаем их автоматическую
+     * регистрацию сервлет-контейнером, иначе они выполняются дважды.
+     */
+    @Bean
+    FilterRegistrationBean<AuthRateLimitFilter> authRateLimitRegistration(AuthRateLimitFilter filter) {
+        FilterRegistrationBean<AuthRateLimitFilter> registration = new FilterRegistrationBean<>(filter);
+        registration.setEnabled(false);
+        return registration;
+    }
+
+    @Bean
+    FilterRegistrationBean<JwtAuthenticationFilter> jwtFilterRegistration(JwtAuthenticationFilter filter) {
+        FilterRegistrationBean<JwtAuthenticationFilter> registration = new FilterRegistrationBean<>(filter);
+        registration.setEnabled(false);
+        return registration;
     }
 
     @Bean
@@ -46,12 +64,14 @@ public class SecurityConfig {
                 .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                 .anyRequest().authenticated())
             .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
+        http.addFilterBefore(new NoStoreFilter(), UsernamePasswordAuthenticationFilter.class);
         http.addFilterBefore(rateLimitFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }
 
     @Bean
-    PasswordEncoder passwordEncoder() {
-        return new Argon2PasswordEncoder(16, 32, 1, 19 * 1024, 2);
+    PasswordEncoder passwordEncoder(AppProperties properties) {
+        Argon2PasswordEncoder argon2 = new Argon2PasswordEncoder(16, 32, 1, 19 * 1024, 2);
+        return new ConcurrencyLimitedPasswordEncoder(argon2, properties.passwordHashConcurrency());
     }
 }

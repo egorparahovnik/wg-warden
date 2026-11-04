@@ -17,7 +17,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @AutoConfigureMockMvc
-@SpringBootTest(properties = "app.registration-enabled=false")
+@SpringBootTest(properties = {
+        "app.registration-enabled=false",
+        "app.bootstrap-token=test-bootstrap-token"
+})
 class RegistrationDisabledTest extends AbstractIntegrationTest {
 
     @Autowired
@@ -43,18 +46,31 @@ class RegistrationDisabledTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void firstAccountIsAllowedOnEmptyDatabase() throws Exception {
+    void firstAccountRequiresSetupTokenAndThenRegistrationCloses() throws Exception {
         users.deleteAll();
 
         mockMvc.perform(post("/api/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"email\":\"first@example.com\",\"password\":\"password1\"}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error").value("first account requires a valid setup token"));
+
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"first@example.com\",\"password\":\"password1\",\"setupToken\":\"wrong-token\"}"))
+                .andExpect(status().isForbidden());
+
+        assertThat(users.findByEmail("first@example.com")).isEmpty();
+
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"first@example.com\",\"password\":\"password1\",\"setupToken\":\"test-bootstrap-token\"}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.user.email").value("first@example.com"));
 
         mockMvc.perform(post("/api/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"email\":\"second@example.com\",\"password\":\"password1\"}"))
+                        .content("{\"email\":\"second@example.com\",\"password\":\"password1\",\"setupToken\":\"test-bootstrap-token\"}"))
                 .andExpect(status().isForbidden());
 
         assertThat(users.findByEmail("second@example.com")).isEmpty();

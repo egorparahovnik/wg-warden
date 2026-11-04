@@ -2,6 +2,7 @@ package com.example.wgwarden.peer;
 
 import com.example.wgwarden.provisioning.WgInterface;
 import com.example.wgwarden.provisioning.WgInterfaceRepository;
+import com.example.wgwarden.provisioning.WireGuardValidation;
 import com.example.wgwarden.server.Server;
 import com.example.wgwarden.server.ServerNotFoundException;
 import com.example.wgwarden.server.ServerRepository;
@@ -42,7 +43,8 @@ public class PeerService {
         KeyPair pair=generateKeyPair();
         String name=request.name().trim();
         ssh.runSudoScript(server.getHost(),server.getSshPort(),server.getSshUser(),serverService.credentials(userId,serverId),server.getHostKeyFingerprint(),addPeerScript(locked.getName(),pair.publicKey(),ip));
-        Peer peer=new Peer(locked.getId(),name,pair.publicKey(),ip+"/32"); peer.setEncryptedPrivateKey(crypto.encrypt(pair.privateKey().getBytes(java.nio.charset.StandardCharsets.UTF_8))); peer.setTrafficLimitBytes(request.trafficLimitBytes()!=null&&request.trafficLimitBytes()>0?request.trafficLimitBytes():null); peer.setExpiresAt(request.expiresAt()); peer=peers.save(peer);
+        // Сгенерированный приватный ключ отдаётся один раз в ответе и не сохраняется.
+        Peer peer=new Peer(locked.getId(),name,pair.publicKey(),ip+"/32"); peer.setTrafficLimitBytes(request.trafficLimitBytes()!=null&&request.trafficLimitBytes()>0?request.trafficLimitBytes():null); peer.setExpiresAt(request.expiresAt()); peer=peers.save(peer);
         String config=clientConfig(server,locked,ip,pair.privateKey());
         return new PeerCreationResponse(PeerResponse.from(peer),config,qr(config));
     }
@@ -126,6 +128,14 @@ public class PeerService {
     private String ipv4String(long ip){return ((ip>>>24)&255)+"."+((ip>>>16)&255)+"."+((ip>>>8)&255)+"."+(ip&255);}
     private record KeyPair(String privateKey,String publicKey){}
     private KeyPair generateKeyPair(){byte[] privateBytes=new X25519PrivateKeyParameters(random).getEncoded();byte[] publicBytes=new X25519PrivateKeyParameters(privateBytes,0).generatePublicKey().getEncoded();return new KeyPair(Base64.getEncoder().encodeToString(privateBytes),Base64.getEncoder().encodeToString(publicBytes));}
+    private void requireSafeScriptValues(String interfaceName,String publicKey,String ip){
+        if(interfaceName==null||!interfaceName.matches("[A-Za-z0-9_.-]{1,15}"))
+            throw new IllegalStateException("stored WireGuard interface name is invalid");
+        if(!WireGuardValidation.publicKey(publicKey))
+            throw new IllegalStateException("stored peer public key is invalid");
+        if(ip!=null&&!WireGuardValidation.ipv4(ip))
+            throw new IllegalStateException("stored peer address is invalid");
+    }
     private String clientConfig(Server server,WgInterface wg,String ip,String privateKey){
         String endpoint=server.getHost().contains(":")&&!server.getHost().startsWith("[")?"["+server.getHost()+"]":server.getHost();
         return "[Interface]\nPrivateKey = "+privateKey+"\nAddress = "+ip+"/32\nDNS = 1.1.1.1\n\n[Peer]\nPublicKey = "+wg.getPublicKey()+"\nEndpoint = "+endpoint+":"+wg.getListenPort()+"\nAllowedIPs = 0.0.0.0/0\nPersistentKeepalive = 25\n";
@@ -137,11 +147,13 @@ public class PeerService {
         }catch(Exception e){throw new IllegalStateException("could not create peer QR code",e);}
     }
     private String addPeerScript(String interfaceName,String publicKey,String ip){
+        requireSafeScriptValues(interfaceName,publicKey,ip);
         return "set -euo pipefail\nexec 9>/run/lock/wg-warden-"+interfaceName+".lock\nflock -x 9\nconf=/etc/wireguard/"+interfaceName+".conf\n"+
                 "grep -qF 'PublicKey = "+publicKey+"' \"$conf\" || cat >> \"$conf\" <<'WG_PEER'\n[Peer]\nPublicKey = "+publicKey+"\nAllowedIPs = "+ip+"/32\nWG_PEER\n"+
                 "wg syncconf "+interfaceName+" <(wg-quick strip "+interfaceName+")\n";
     }
     private String removePeerScript(String interfaceName,String publicKey){
+        requireSafeScriptValues(interfaceName,publicKey,null);
         return "set -euo pipefail\nexec 9>/run/lock/wg-warden-"+interfaceName+".lock\nflock -x 9\nconf=/etc/wireguard/"+interfaceName+".conf\ntmp=$(mktemp)\n"+
                 "awk -v key='"+publicKey+"' 'function flush(){if(!drop)for(i=1;i<=n;i++)print lines[i];delete lines;n=0;drop=0} " +
                 "/^\\[Peer\\][[:space:]]*$/ {flush();peer=1;lines[++n]=$0;next} peer {lines[++n]=$0;if($1==\"PublicKey\"&&$2==\"=\"&&$3==key)drop=1;next} {print} END{flush()}' \"$conf\" > \"$tmp\"\n"+

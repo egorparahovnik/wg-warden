@@ -28,8 +28,14 @@ app:
   master-key: ${APP_MASTER_KEY}   # 32 байта в base64, хранится вне БД
   jwt-secret: ${JWT_SECRET}
   jwt-expiration: 24h
-  # false закрывает /api/auth/register (вход продолжает работать)
-  registration-enabled: ${APP_REGISTRATION_ENABLED:true}
+  # false закрывает /api/auth/register (вход продолжает работать).
+  # Первый аккаунт создаётся только с одноразовым setup-токеном.
+  registration-enabled: ${APP_REGISTRATION_ENABLED:false}
+  bootstrap-token: ${APP_BOOTSTRAP_TOKEN:}
+  # Одновременных Argon2-хешей: ограничивает пиковую память контейнера.
+  password-hash-concurrency: ${APP_PASSWORD_HASH_CONCURRENCY:2}
+  # Доверять X-Real-IP можно только от этих прокси (Docker-сети по умолчанию).
+  trusted-proxies: ${APP_TRUSTED_PROXIES:172.16.0.0/12,10.0.0.0/8,192.168.0.0/16}
   monitoring:
     retention: ${MONITORING_RETENTION:30d}
     interval: ${MONITORING_INTERVAL:60s}

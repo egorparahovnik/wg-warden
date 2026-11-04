@@ -60,6 +60,8 @@ services:
       APP_MASTER_KEY: ${APP_MASTER_KEY:?APP_MASTER_KEY is required}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       APP_REGISTRATION_ENABLED: ${APP_REGISTRATION_ENABLED:-false}
+      APP_BOOTSTRAP_TOKEN: ${APP_BOOTSTRAP_TOKEN:-}
+      APP_PASSWORD_HASH_CONCURRENCY: ${APP_PASSWORD_HASH_CONCURRENCY:-2}
       MONITORING_INTERVAL: ${MONITORING_INTERVAL:-60s}
       SERVER_PORT: 8081
       # SerialGC и потолок metaspace: предсказуемое потребление памяти.
@@ -111,6 +113,10 @@ services:
   caddy:
     image: caddy:2-alpine
     container_name: wg-warden-caddy
+    # Статический адрес: nginx доверяет X-Real-IP только от него.
+    networks:
+      default:
+        ipv4_address: 172.28.0.10
     environment:
       APP_DOMAIN: ${APP_DOMAIN:?APP_DOMAIN is required}
     # acme — сертификат Let's Encrypt для домена, internal — самоподписанный (IP, локальная сеть).
@@ -140,3 +146,10 @@ volumes:
     name: ${CADDY_DATA_VOLUME:-wg-warden_caddy_data}
   caddy_config:
     name: ${CADDY_CONFIG_VOLUME:-wg-warden_caddy_config}
+
+networks:
+  default:
+    name: wg-warden-tls
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24

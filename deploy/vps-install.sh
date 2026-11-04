@@ -71,15 +71,29 @@ if [ ! -f "$ENV_FILE" ]; then
     -e "s|^DB_PASSWORD=.*|DB_PASSWORD=$(openssl rand -hex 24)|" \
     -e "s|^APP_MASTER_KEY=.*|APP_MASTER_KEY=$(openssl rand -base64 32 | tr -d '\n')|" \
     -e "s|^JWT_SECRET=.*|JWT_SECRET=$(openssl rand -base64 48 | tr -d '\n')|" \
+    -e "s|^APP_BOOTSTRAP_TOKEN=.*|APP_BOOTSTRAP_TOKEN=$(openssl rand -hex 24)|" \
     "$ENV_FILE"
   rm -f "$ENV_FILE.bak"
   chmod 600 "$ENV_FILE"
   say "Создан $ENV_FILE с новыми секретами"
 fi
 
-for key in DB_PASSWORD APP_MASTER_KEY JWT_SECRET; do
+# Обновление со старой версии: добавляем setup-токен, если его ещё нет.
+if ! grep -q '^APP_BOOTSTRAP_TOKEN=..*' "$ENV_FILE"; then
+  if grep -q '^APP_BOOTSTRAP_TOKEN=' "$ENV_FILE"; then
+    sed -i.bak "s|^APP_BOOTSTRAP_TOKEN=.*|APP_BOOTSTRAP_TOKEN=$(openssl rand -hex 24)|" "$ENV_FILE"
+    rm -f "$ENV_FILE.bak"
+  else
+    printf '\nAPP_BOOTSTRAP_TOKEN=%s\n' "$(openssl rand -hex 24)" >> "$ENV_FILE"
+  fi
+  chmod 600 "$ENV_FILE"
+  say "Добавлен APP_BOOTSTRAP_TOKEN для создания первого аккаунта"
+fi
+
+for key in DB_PASSWORD APP_MASTER_KEY JWT_SECRET APP_BOOTSTRAP_TOKEN; do
   grep -q "^${key}=..*" "$ENV_FILE" || die "$key не заполнен в $ENV_FILE"
 done
+bootstrap_token="$(env_value APP_BOOTSTRAP_TOKEN)"
 
 web_port="$(env_value WEB_PORT)"
 web_port="${web_port:-80}"
@@ -162,6 +176,8 @@ else
 fi
 
 printf '\nwg-warden запущен: %s\n' "$address"
+printf 'Токен для первого аккаунта: %s\n' "$bootstrap_token"
+printf 'Он сохранён в %s как APP_BOOTSTRAP_TOKEN.\n' "$ENV_FILE"
 printf 'Управление: ./deploy/vps-service.sh {start|stop|restart|status|logs}\n'
 printf 'Резервная копия: ./deploy/vps-backup.sh\n'
 
@@ -177,8 +193,8 @@ HINT
 else
   cat <<'HINT'
 
-Регистрация закрыта. Свой аккаунт можно создать только пока база пуста —
-сделайте это при первом входе в панель.
+Регистрация закрыта. Первый аккаунт создаётся одноразовым setup-токеном
+(APP_BOOTSTRAP_TOKEN в .env.vps), дальнейшие регистрации запрещены.
 HINT
 fi
 

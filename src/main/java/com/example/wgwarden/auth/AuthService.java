@@ -6,6 +6,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.Locale;
 
 @Service
@@ -27,9 +29,17 @@ public class AuthService {
 
     @Transactional
     public AuthResponse register(RegisterRequest request) {
-        // Первый аккаунт на пустой базе создаётся всегда: иначе сервер с закрытой
-        // регистрацией остался бы без владельца. Дальше регистрация закрыта флагом.
-        if (!properties.registrationEnabled() && users.count() > 0) {
+        // Сериализуем bootstrap на уровне PostgreSQL: два одновременных запроса
+        // на пустой базе не должны создать двух «первых» пользователей.
+        users.lockRegistration();
+
+        // Первый аккаунт создаётся только по одноразовому setup-токену.
+        // Дальше регистрация управляется флагом APP_REGISTRATION_ENABLED.
+        if (users.count() == 0) {
+            if (!validBootstrapToken(request.setupToken())) {
+                throw new BootstrapTokenRequiredException();
+            }
+        } else if (!properties.registrationEnabled()) {
             throw new RegistrationDisabledException();
         }
         String email = normalizeEmail(request.email());
@@ -65,6 +75,16 @@ public class AuthService {
 
     private AuthResponse toAuthResponse(User user) {
         return new AuthResponse(jwt.createToken(user), UserResponse.from(user));
+    }
+
+    private boolean validBootstrapToken(String supplied) {
+        String expected = properties.bootstrapToken();
+        if (expected == null || expected.isBlank() || supplied == null || supplied.isBlank()) {
+            return false;
+        }
+        return MessageDigest.isEqual(
+                expected.getBytes(StandardCharsets.UTF_8),
+                supplied.getBytes(StandardCharsets.UTF_8));
     }
 
     static String normalizeEmail(String email) {

@@ -44,7 +44,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 SecurityContextHolder.getContext().setAuthentication(authentication);
             } catch (InvalidJwtException e) {
                 request.setAttribute("jwt.invalid", Boolean.TRUE);
-                log.warn("Rejected invalid JWT for {} {}", request.getMethod(), request.getRequestURI());
+                // debug: иначе поток мусорных токенов забивает диск и логи.
+                log.debug("Rejected invalid JWT for {} {}", request.getMethod(), request.getRequestURI());
                 // Не блокируем публичные маршруты: защищённые вернут 401 через entry point.
                 SecurityContextHolder.clearContext();
             }

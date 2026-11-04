@@ -201,7 +201,7 @@ class AuthApiTest extends AbstractIntegrationTest {
         return post("/api/auth/register")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                        {"email":"%s","password":"%s"}
+                        {"email":"%s","password":"%s","setupToken":"test-bootstrap-token"}
                         """.formatted(email, password));
     }
 

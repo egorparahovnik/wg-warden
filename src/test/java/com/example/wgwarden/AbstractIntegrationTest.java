@@ -10,7 +10,10 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
-@SpringBootTest
+@SpringBootTest(properties = {
+        "app.registration-enabled=true",
+        "app.bootstrap-token=test-bootstrap-token"
+})
 @Testcontainers
 @ActiveProfiles("dev")
 public abstract class AbstractIntegrationTest {

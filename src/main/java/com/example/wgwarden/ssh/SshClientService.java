@@ -17,6 +17,7 @@ import java.util.concurrent.TimeUnit;
 @Service
 public class SshClientService {
     private static final Logger log = LoggerFactory.getLogger(SshClientService.class);
+    private static final int MAX_OUTPUT_BYTES = 1024 * 1024;
     public record ProbeResult(String fingerprint,String operatingSystem) {}
     public ProbeResult probe(String host,int port,String username,SshCredentials credentials,String pinnedFingerprint) {
         final String[] observed={null};
@@ -68,19 +69,22 @@ public class SshClientService {
             client.start();
             try(ClientSession session=client.connect(username,host,port).verify(10,TimeUnit.SECONDS).getSession()) {
                 authenticate(session,credentials);
-                try(var channel=session.createExecChannel("sudo -n bash -s");var out=new ByteArrayOutputStream()) {
+                try(var channel=session.createExecChannel("sudo -n bash -s");var out=new LimitedOutputStream(MAX_OUTPUT_BYTES)) {
                     channel.setIn(new ByteArrayInputStream(script.getBytes(StandardCharsets.UTF_8)));
                     channel.setOut(out);channel.setErr(out);channel.open().verify(10,TimeUnit.SECONDS);
                     var events=channel.waitFor(java.util.EnumSet.of(org.apache.sshd.client.channel.ClientChannelEvent.CLOSED),TimeUnit.MINUTES.toMillis(3));
                     if(!events.contains(org.apache.sshd.client.channel.ClientChannelEvent.CLOSED))
                         throw new IOException("Remote SSH command timed out after 3 minutes");
-                    if(channel.getExitStatus()==null) throw new IOException("Remote SSH command closed without an exit status; output: "+out.toString(StandardCharsets.UTF_8));
-                    if(channel.getExitStatus()!=0) throw new IOException("Remote SSH command exited with status "+channel.getExitStatus()+"; output: "+out.toString(StandardCharsets.UTF_8));
-                    return out.toString(StandardCharsets.UTF_8).trim();
+                    if(channel.getExitStatus()==null) throw new IOException("Remote SSH command closed without an exit status");
+                    if(channel.getExitStatus()!=0) throw new IOException("Remote SSH command exited with status "+channel.getExitStatus());
+                    return out.asString().trim();
                 }
             }
         } catch(Exception e) {
-            log.error("Remote SSH command failed for {}@{}:{}: {}", username, host, port, safeReason(e), e);
+            // В выводе удалённой команды могут быть ключи и другие секреты,
+            // поэтому в лог и клиенту отдаём только тип/краткую причину.
+            log.error("Remote SSH command failed for {}@{}:{} ({})", username, host, port,
+                    e.getClass().getSimpleName());
             throw new SshConnectionException("remote SSH command failed: "+safeReason(e),e);
         }
     }
@@ -101,4 +105,34 @@ public class SshClientService {
         }
     }
     private String fingerprint(PublicKey key) throws Exception { return "SHA256:"+Base64.getEncoder().withoutPadding().encodeToString(MessageDigest.getInstance("SHA-256").digest(key.getEncoded())); }
+
+    /** Ограничивает объём вывода, чтобы скомпрометированный сервер не исчерпал память панели. */
+    private static final class LimitedOutputStream extends OutputStream {
+        private final ByteArrayOutputStream delegate = new ByteArrayOutputStream();
+        private final int limit;
+
+        private LimitedOutputStream(int limit) {
+            this.limit = limit;
+        }
+
+        @Override public void write(int value) throws IOException {
+            ensureCapacity(1);
+            delegate.write(value);
+        }
+
+        @Override public void write(byte[] data, int offset, int length) throws IOException {
+            ensureCapacity(length);
+            delegate.write(data, offset, length);
+        }
+
+        private void ensureCapacity(int extra) throws IOException {
+            if ((long) delegate.size() + extra > limit) {
+                throw new IOException("Remote SSH command output exceeded " + limit + " bytes");
+            }
+        }
+
+        private String asString() {
+            return delegate.toString(StandardCharsets.UTF_8);
+        }
+    }
 }

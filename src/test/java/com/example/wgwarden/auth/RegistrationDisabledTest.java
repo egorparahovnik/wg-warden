@@ -31,6 +31,8 @@ class RegistrationDisabledTest extends AbstractIntegrationTest {
 
     @Test
     void registerIsForbiddenAndUserIsNotCreated() throws Exception {
+        users.save(new User("closed-owner@example.com", passwords.encode("password1")));
+
         mockMvc.perform(post("/api/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"email\":\"blocked@example.com\",\"password\":\"password1\"}"))
@@ -41,12 +43,30 @@ class RegistrationDisabledTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void firstAccountIsAllowedOnEmptyDatabase() throws Exception {
+        users.deleteAll();
+
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"first@example.com\",\"password\":\"password1\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.user.email").value("first@example.com"));
+
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"second@example.com\",\"password\":\"password1\"}"))
+                .andExpect(status().isForbidden());
+
+        assertThat(users.findByEmail("second@example.com")).isEmpty();
+    }
+
+    @Test
     void existingUserCanStillLogIn() throws Exception {
-        users.save(new User("owner@example.com", passwords.encode("password1")));
+        users.save(new User("login-owner@example.com", passwords.encode("password1")));
 
         mockMvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"email\":\"owner@example.com\",\"password\":\"password1\"}"))
+                        .content("{\"email\":\"login-owner@example.com\",\"password\":\"password1\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.token").value(not(blankOrNullString())));
     }

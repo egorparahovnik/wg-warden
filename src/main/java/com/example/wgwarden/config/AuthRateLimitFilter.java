@@ -9,9 +9,11 @@ import java.io.IOException;
 import java.time.Instant;
 import java.util.concurrent.ConcurrentHashMap;
 
-final class AuthRateLimitFilter extends OncePerRequestFilter {
+public final class AuthRateLimitFilter extends OncePerRequestFilter {
     private record Window(long started, int count) {}
     private final ConcurrentHashMap<String, Window> windows = new ConcurrentHashMap<>();
+    /** Сбрасывает счётчики: нужен тестам, чтобы окна разных тестов не складывались. */
+    public void clear() { windows.clear(); }
     @Override protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain) throws ServletException, IOException {
         if (!request.getRequestURI().equals("/api/auth/login") && !request.getRequestURI().equals("/api/auth/register")) { chain.doFilter(request,response); return; }
         String key=request.getHeader("X-Real-IP");

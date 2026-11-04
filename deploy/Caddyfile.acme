@@ -1,0 +1,13 @@
+# HTTPS с сертификатом Let's Encrypt. Требуется домен с A-записью на IP этого VPS
+# и доступные снаружи порты 80 (HTTP-01) и 443.
+{$APP_DOMAIN} {
+	encode zstd gzip
+
+	# HSTS добавляется только здесь: по HTTP этот заголовок не нужен.
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+	reverse_proxy web:80 {
+		# nginx берёт realip из этого заголовка: иначе лимит входа считался бы на IP Caddy.
+		header_up X-Real-IP {remote_host}
+	}
+}

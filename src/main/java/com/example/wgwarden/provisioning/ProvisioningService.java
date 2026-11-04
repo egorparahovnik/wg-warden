@@ -109,6 +109,10 @@ public class ProvisioningService {
             if ! systemctl is-active --quiet wg-quick@wg-warden0; then
               systemctl start wg-quick@wg-warden0
             fi
+            # С закрытым UDP-портом пир поднимается, но handshake не проходит.
+            if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q 'Status: active'; then
+              ufw allow 51821/udp >/dev/null 2>&1 || true
+            fi
             printf 'WG_PRIVATE=%s\\nWG_PUBLIC=%s\\n' "$private_key" "$public_key"
             """;
     }

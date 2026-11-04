@@ -27,7 +27,9 @@ public class AuthService {
 
     @Transactional
     public AuthResponse register(RegisterRequest request) {
-        if (!properties.registrationEnabled()) {
+        // Первый аккаунт на пустой базе создаётся всегда: иначе сервер с закрытой
+        // регистрацией остался бы без владельца. Дальше регистрация закрыта флагом.
+        if (!properties.registrationEnabled() && users.count() > 0) {
             throw new RegistrationDisabledException();
         }
         String email = normalizeEmail(request.email());

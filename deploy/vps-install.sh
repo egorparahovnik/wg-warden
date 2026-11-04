@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Установка и обновление wg-warden на VPS: панель открывается по IP, без домена.
+# Установка и обновление wg-warden на VPS.
+# Без APP_DOMAIN панель открывается по IP через HTTP, с APP_DOMAIN — по HTTPS через Caddy.
 # Запускать на Linux-VPS из папки проекта: ./deploy/vps-install.sh
 set -euo pipefail
 
@@ -15,8 +16,12 @@ as_root() {
   if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo "$@"; fi
 }
 
+env_value() {
+  sed -n "s|^$1=||p" "$ENV_FILE" | tail -n 1
+}
+
 compose() {
-  docker compose -f docker-compose.vps.yml --env-file "$ENV_FILE" "$@"
+  docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" "$@"
 }
 
 [ "$(uname -s)" = "Linux" ] || die "скрипт предназначен для Linux-VPS. Для локального запуска используйте ./install.sh"
@@ -76,8 +81,40 @@ for key in DB_PASSWORD APP_MASTER_KEY JWT_SECRET; do
   grep -q "^${key}=..*" "$ENV_FILE" || die "$key не заполнен в $ENV_FILE"
 done
 
-web_port="$(sed -n 's/^WEB_PORT=//p' "$ENV_FILE" | tail -n 1)"
+web_port="$(env_value WEB_PORT)"
 web_port="${web_port:-80}"
+app_domain="$(env_value APP_DOMAIN)"
+app_domain="${app_domain// /}"
+
+if [ -n "$app_domain" ]; then
+  COMPOSE_FILE="docker-compose.tls.yml"
+  tls_mode="$(env_value TLS_MODE)"
+  tls_mode="${tls_mode:-acme}"
+  http_port="$(env_value HTTP_PORT)"
+  http_port="${http_port:-80}"
+  https_port="$(env_value HTTPS_PORT)"
+  https_port="${https_port:-443}"
+  case "$tls_mode" in
+    acme|internal) ;;
+    *) die "TLS_MODE должен быть acme или internal (сейчас: $tls_mode)" ;;
+  esac
+  [ -f "deploy/Caddyfile.${tls_mode}" ] || die "не найден deploy/Caddyfile.${tls_mode}"
+  say "Домен ${app_domain}: панель пойдёт по HTTPS (режим сертификата: ${tls_mode})"
+
+  if [ "$tls_mode" = "acme" ]; then
+    resolved="$(getent hosts "$app_domain" 2>/dev/null | awk '{print $1}' | head -n 1 || true)"
+    public_ip="$(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)"
+    if [ -n "$resolved" ] && [ -n "$public_ip" ] && [ "$resolved" != "$public_ip" ]; then
+      say "Внимание: ${app_domain} указывает на ${resolved}, а IP сервера ${public_ip}. Let's Encrypt не выдаст сертификат, пока A-запись не исправлена."
+    elif [ -z "$resolved" ]; then
+      say "Внимание: ${app_domain} пока не резолвится. Сертификат не выпустится, пока не появится A-запись на IP этого VPS."
+    fi
+  else
+    say "Самоподписанный сертификат: браузер покажет предупреждение, трафик при этом шифруется"
+  fi
+else
+  COMPOSE_FILE="docker-compose.vps.yml"
+fi
 
 # Собираем последовательно: на слабом VPS параллельная сборка Maven и Node упирается в память.
 say "Собираю образы (на VPS с 1 ГБ RAM это может занять 5–15 минут)"
@@ -90,7 +127,14 @@ compose up -d --remove-orphans
 say "Ожидаю готовности приложения"
 healthy=0
 for _ in $(seq 1 60); do
-  if curl -fsS "http://127.0.0.1:${web_port}/actuator/health" >/dev/null 2>&1; then
+  if [ -n "$app_domain" ]; then
+    probe=(curl -fsS --resolve "${app_domain}:${https_port}:127.0.0.1")
+    [ "$tls_mode" = "internal" ] && probe+=(-k)
+    probe+=("https://${app_domain}:${https_port}/actuator/health")
+  else
+    probe=(curl -fsS "http://127.0.0.1:${web_port}/actuator/health")
+  fi
+  if "${probe[@]}" >/dev/null 2>&1; then
     healthy=1
     break
   fi
@@ -98,35 +142,50 @@ for _ in $(seq 1 60); do
 done
 
 if [ "$healthy" -ne 1 ]; then
-  docker compose -f docker-compose.vps.yml --env-file "$ENV_FILE" ps >&2 || true
+  docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps >&2 || true
+  if [ -n "$app_domain" ] && [ "$tls_mode" = "acme" ]; then
+    die "приложение не ответило за 3 минуты. Если порт 80 закрыт или A-запись неверна, сертификат не выпустится. Логи: ./deploy/vps-service.sh logs"
+  fi
   die "приложение не ответило за 3 минуты. Логи: ./deploy/vps-service.sh logs"
 fi
 
-public_ip="$(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)"
-if [ -z "$public_ip" ]; then
-  public_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+if [ -n "$app_domain" ]; then
+  address="https://${app_domain}"
+  [ "$https_port" = "443" ] || address="${address}:${https_port}"
+else
+  public_ip="$(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)"
+  if [ -z "$public_ip" ]; then
+    public_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  fi
+  address="http://${public_ip:-<IP-VPS>}"
+  [ "$web_port" = "80" ] || address="${address}:${web_port}"
 fi
-
-address="http://${public_ip:-<IP-VPS>}"
-[ "$web_port" = "80" ] || address="${address}:${web_port}"
 
 printf '\nwg-warden запущен: %s\n' "$address"
 printf 'Управление: ./deploy/vps-service.sh {start|stop|restart|status|logs}\n'
+printf 'Резервная копия: ./deploy/vps-backup.sh\n'
 
 if grep -q '^APP_REGISTRATION_ENABLED=true' "$ENV_FILE"; then
   cat <<'HINT'
 
-Регистрация пока открыта. Сразу после установки:
-  1. откройте панель по адресу выше и создайте свой аккаунт;
+Регистрация открыта для всех: любой, кто знает адрес панели, может создать аккаунт.
+Закройте её сразу после создания своего аккаунта:
+  1. создайте аккаунт в панели;
   2. поставьте в .env.vps строку APP_REGISTRATION_ENABLED=false;
   3. примените настройку: ./deploy/vps-service.sh restart
+HINT
+else
+  cat <<'HINT'
 
-Иначе любой, кто найдёт IP, сможет зарегистрироваться в вашей панели.
+Регистрация закрыта. Свой аккаунт можно создать только пока база пуста —
+сделайте это при первом входе в панель.
 HINT
 fi
 
-cat <<'HINT'
+if [ -z "$app_domain" ]; then
+  cat <<'HINT'
 
 Доступ по IP идёт по HTTP, без TLS: логин и токен передаются открыто.
-Для постоянной работы выделите домен и поставьте перед панелью HTTPS-прокси.
+Для постоянной работы укажите домен в APP_DOMAIN и запустите установку снова.
 HINT
+fi

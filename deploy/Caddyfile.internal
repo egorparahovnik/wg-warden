@@ -1,0 +1,13 @@
+# HTTPS с самоподписанным сертификатом: подходит для доступа по IP или из локальной сети.
+# Браузер покажет предупреждение о недоверенном сертификате — трафик при этом шифруется.
+{$APP_DOMAIN} {
+	tls internal
+	encode zstd gzip
+
+	header Strict-Transport-Security "max-age=31536000"
+
+	reverse_proxy web:80 {
+		# nginx берёт realip из этого заголовка: иначе лимит входа считался бы на IP Caddy.
+		header_up X-Real-IP {remote_host}
+	}
+}

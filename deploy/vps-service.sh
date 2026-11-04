@@ -15,14 +15,30 @@ if ! docker info >/dev/null 2>&1; then
   exit 1
 fi
 
-compose() {
-  docker compose -f docker-compose.vps.yml --env-file .env.vps "$@"
+env_value() {
+  sed -n "s|^$1=||p" .env.vps | tail -n 1
 }
 
-web_port="$(sed -n 's/^WEB_PORT=//p' .env.vps | tail -n 1)"
-web_port="${web_port:-80}"
-address="http://$(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')"
-[ "$web_port" = "80" ] || address="${address}:${web_port}"
+app_domain="$(env_value APP_DOMAIN)"
+app_domain="${app_domain// /}"
+
+if [ -n "$app_domain" ]; then
+  COMPOSE_FILE="docker-compose.tls.yml"
+  https_port="$(env_value HTTPS_PORT)"
+  https_port="${https_port:-443}"
+  address="https://${app_domain}"
+  [ "$https_port" = "443" ] || address="${address}:${https_port}"
+else
+  COMPOSE_FILE="docker-compose.vps.yml"
+  web_port="$(env_value WEB_PORT)"
+  web_port="${web_port:-80}"
+  address="http://$(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')"
+  [ "$web_port" = "80" ] || address="${address}:${web_port}"
+fi
+
+compose() {
+  docker compose -f "$COMPOSE_FILE" --env-file .env.vps "$@"
+}
 
 case "${1:-}" in
   start)

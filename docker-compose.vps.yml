@@ -1,0 +1,113 @@
+# Запуск wg-warden на VPS: панель доступна по IP, наружу открыт только веб-порт.
+# Запуск: ./deploy/vps-install.sh (или ./deploy/vps-service.sh start)
+# Локальный запуск (docker-compose.yml) этот файл не затрагивает.
+name: wg-warden
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: wg-warden-db
+    environment:
+      POSTGRES_DB: wgwarden
+      POSTGRES_USER: ${DB_USER:-wgwarden}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+    # Настройки под 1 ГБ RAM: PostgreSQL по умолчанию резервирует заметно больше.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=64MB
+      - -c
+      - effective_cache_size=128MB
+      - -c
+      - max_connections=20
+      - -c
+      - work_mem=2MB
+      - -c
+      - maintenance_work_mem=32MB
+      - -c
+      - wal_compression=on
+      - -c
+      - max_wal_size=256MB
+      - -c
+      - min_wal_size=32MB
+    # Порт базы наружу не публикуется: доступ только из сети Docker.
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-wgwarden}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    restart: unless-stopped
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: wg-warden-app
+    container_name: wg-warden-app
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_URL: jdbc:postgresql://db:5432/wgwarden
+      DB_USER: ${DB_USER:-wgwarden}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      APP_MASTER_KEY: ${APP_MASTER_KEY:?APP_MASTER_KEY is required}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      APP_REGISTRATION_ENABLED: ${APP_REGISTRATION_ENABLED:-true}
+      MONITORING_INTERVAL: ${MONITORING_INTERVAL:-60s}
+      SERVER_PORT: 8081
+      # SerialGC и потолок metaspace: предсказуемое потребление памяти.
+      JAVA_TOOL_OPTIONS: >-
+        -XX:MaxRAMPercentage=60
+        -XX:MaxMetaspaceSize=128m
+        -XX:+UseSerialGC
+        -XX:+ExitOnOutOfMemoryError
+        -Xss512k
+    expose:
+      - "8081"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8081/actuator/health | grep -q 'UP'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    mem_limit: 576m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "2"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: wg-warden-web
+    container_name: wg-warden-web
+    # 0.0.0.0: панель открывается по адресу http://<IP-VPS>. Порт меняется через WEB_PORT.
+    ports:
+      - "${WEB_PORT:-80}:80"
+    depends_on:
+      app:
+        condition: service_healthy
+    mem_limit: 48m
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+    name: ${PGDATA_VOLUME:-wg-warden_vps_pgdata}

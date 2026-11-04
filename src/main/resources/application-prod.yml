@@ -1,0 +1,32 @@
+# Профиль для запуска на VPS. Локальный запуск его не использует.
+spring:
+  datasource:
+    hikari:
+      # Панель обслуживает одного-нескольких пользователей: большой пул не нужен.
+      maximum-pool-size: 5
+      minimum-idle: 2
+
+server:
+  # Если позже появится TLS-прокси, X-Forwarded-* будут учтены.
+  forward-headers-strategy: framework
+  tomcat:
+    max-connections: 256
+    accept-count: 64
+
+# Swagger не публикуется на сервере: это лишняя поверхность атаки.
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+
+logging:
+  level:
+    root: INFO
+    com.zaxxer.hikari: WARN

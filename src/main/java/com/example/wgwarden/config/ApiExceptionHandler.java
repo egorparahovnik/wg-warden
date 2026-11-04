@@ -2,6 +2,7 @@ package com.example.wgwarden.config;
 
 import com.example.wgwarden.auth.EmailAlreadyTakenException;
 import com.example.wgwarden.auth.InvalidCredentialsException;
+import com.example.wgwarden.auth.RegistrationDisabledException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -21,6 +22,11 @@ public class ApiExceptionHandler {
     @ExceptionHandler(EmailAlreadyTakenException.class)
     ResponseEntity<ErrorResponse> emailTaken(EmailAlreadyTakenException e) {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(new ErrorResponse(e.getMessage()));
+    }
+
+    @ExceptionHandler(RegistrationDisabledException.class)
+    ResponseEntity<ErrorResponse> registrationDisabled(RegistrationDisabledException e) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(new ErrorResponse(e.getMessage()));
     }
 
     @ExceptionHandler(InvalidCredentialsException.class)

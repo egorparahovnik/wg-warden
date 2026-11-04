@@ -1,5 +1,6 @@
 package com.example.wgwarden.auth;
 
+import com.example.wgwarden.config.AppProperties;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -13,17 +14,22 @@ public class AuthService {
     private final UserRepository users;
     private final PasswordEncoder passwords;
     private final JwtService jwt;
+    private final AppProperties properties;
     private final String dummyPasswordHash;
 
-    public AuthService(UserRepository users, PasswordEncoder passwords, JwtService jwt) {
+    public AuthService(UserRepository users, PasswordEncoder passwords, JwtService jwt, AppProperties properties) {
         this.users = users;
         this.passwords = passwords;
         this.jwt = jwt;
+        this.properties = properties;
         this.dummyPasswordHash = passwords.encode("dummy-password-for-timing");
     }
 
     @Transactional
     public AuthResponse register(RegisterRequest request) {
+        if (!properties.registrationEnabled()) {
+            throw new RegistrationDisabledException();
+        }
         String email = normalizeEmail(request.email());
         if (users.existsByEmail(email)) {
             throw new EmailAlreadyTakenException();
